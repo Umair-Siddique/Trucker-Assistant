@@ -1,0 +1,80 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio build outputs
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# FVM Version Cache
+.fvm/
+
+# 🔒 Secrets (DO NOT COMMIT)
+.env
+dart_defines.json
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+
+# iOS sensitive
+ios/Runner/Info.plist
+
+# Local/editor/temp
+.vscode/
+*.bak
+runlog.txt
+crashlogs/
+crash_bundle/
+
+# Xcode backup/project temp
+ios/Runner.xcodeproj/*.BAK
+ios/Runner.xcodeproj/project.pbxproj.pre_*
+
+node_modules/
+.env
+.env.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+coverage/
+dist/
+build/
