@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AppSettings extends ChangeNotifier {
@@ -38,11 +39,14 @@ class AppSettings extends ChangeNotifier {
 
   final SharedPreferences _prefs;
 
-  static const String _defaultBackend = String.fromEnvironment(
-    'BACKEND_BASE_URL',
-    defaultValue:
-        'https://3ccc-2400-adc5-1a5-7c00-a95e-c561-7f88-8b55.ngrok-free.app',
-  );
+  static String get _defaultBackend {
+    final fromEnv = dotenv.env['BACKEND_BASE_URL']?.trim();
+    if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
+    return const String.fromEnvironment(
+      'BACKEND_BASE_URL',
+      defaultValue: 'http://127.0.0.1:8787',
+    );
+  }
 
   static const String _defaultVoice = 'alloy';
 

@@ -47,6 +47,7 @@ app.*.map.json
 
 # 🔒 Secrets (DO NOT COMMIT)
 .env
+ios/Flutter/GeneratedSecrets.xcconfig
 dart_defines.json
 *.key
 *.pem

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/logs_screen.dart';
 import 'screens/maps_screen.dart';
@@ -17,6 +18,8 @@ import 'services/weather_command_bus.dart' as weatherbus;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load(fileName: '.env');
 
   final settings = await AppSettings.load();
 
