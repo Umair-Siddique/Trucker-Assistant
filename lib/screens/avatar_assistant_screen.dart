@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -9,6 +10,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 import '../services/app_settings.dart';
 import '../services/logs_command_bus.dart' as logsbus;
 import '../services/map_command_bus.dart' as mapbus;
+import '../services/openai_realtime_voice.dart';
 import '../services/realtime_voice.dart';
 import '../services/settings_command_bus.dart' as settingsbus;
 import '../services/weather_command_bus.dart' as weatherbus;
@@ -24,6 +26,7 @@ class AvatarAssistantScreen extends StatefulWidget {
 
 class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   late RealtimeVoiceClient _rt;
+  late final OpenaiRealtimeVoiceController _openAiVoice;
 
   final AudioPlayer _player = AudioPlayer();
   final ScrollController _scrollController = ScrollController();
@@ -38,6 +41,32 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   bool _isHolding = false;
   bool _busy = false;
 
+  /// OpenAI Realtime voice session active (hands-free, server VAD).
+  bool _openAiListening = false;
+  int? _openAiUserIdx;
+  int? _openAiAiIdx;
+
+  /// Half-duplex: suppress uplink while local assistant audio plays (avoids mic picking up speaker).
+  int _openAiAssistantPlaybackDepth = 0;
+  Timer? _openAiSuppressTailTimer;
+
+  /// Stream assistant PCM as deltas arrive (not after response completes).
+  final List<Uint8List> _openAiPcmQueue = [];
+  bool _openAiPcmDraining = false;
+  bool _openAiPcmEndOfResponse = false;
+
+  /// Merge tiny API deltas into larger PCM blocks so [just_audio] is not stop/started per word.
+  final BytesBuilder _openAiPcmCoalesce = BytesBuilder();
+  Timer? _openAiPcmCoalesceTimer;
+
+  /// Keep one ExoPlayer instance alive by appending chunk files to one playlist.
+  ConcatenatingAudioSource? _openAiPlaybackSource;
+  int _openAiPlaybackLastIndex = -1;
+
+  /// ~200 ms at 24 kHz mono PCM16.
+  static const int _openAiPcmCoalesceMinBytes = 9600;
+  static const Duration _openAiPcmCoalesceMaxWait = Duration(milliseconds: 120);
+
   static const String driverName = 'Gabriel';
   static const int _pcmChannels = 1;
   /// Assistant PCM from Realtime/TTS when [audioFormat] is `pcm16` (see backend `pcmSampleRate`).
@@ -47,6 +76,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   void initState() {
     super.initState();
     _rt = RealtimeVoiceClient(baseUrl: widget.settings.backendBaseUrl);
+    _openAiVoice = OpenaiRealtimeVoiceController();
 
     _stt.statusListener = (status) {
       // Keep listening as long as the user is holding the mic.
@@ -75,6 +105,19 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
 
   @override
   void dispose() {
+    unawaited(_resetOpenAiPlaybackSource(stopPlayer: true));
+    _openAiPcmCoalesceTimer?.cancel();
+    if (_openAiPcmCoalesce.isNotEmpty) {
+      _openAiPcmCoalesce.takeBytes();
+    }
+    _openAiPcmQueue.clear();
+    _openAiPcmEndOfResponse = false;
+    _openAiSuppressTailTimer?.cancel();
+    _openAiVoice.setSuppressMicToServer(false);
+    if (_openAiListening) {
+      unawaited(_openAiVoice.stopContinuousListening());
+    }
+    unawaited(_openAiVoice.dispose());
     _rt.dispose();
     _player.dispose();
     _scrollController.dispose();
@@ -115,9 +158,302 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     return '$part, $driverName. What route are we driving today?';
   }
 
+  String _buildRealtimeInstructions() {
+    final name = widget.settings.driverName.trim();
+    final displayName = name.isEmpty ? driverName : name;
+    return 'You are RoadDogg, a concise AI co-pilot for professional truck '
+        'drivers. The driver\'s name is $displayName. '
+        'Use the provided tools when they want maps search, settings, driver '
+        'logs, weather (including a city or radar), or to refresh weather. '
+        'Do not say you opened something unless you called the matching tool.';
+  }
+
+  bool get _useOpenAiVoice =>
+      widget.settings.ttsEnabled &&
+      !kIsWeb &&
+      OpenaiRealtimeVoiceController.apiKeyFromEnv != null;
+
+  Future<void> _toggleOpenAiVoice() async {
+    if (_openAiListening) {
+      await _stopOpenAiVoiceSession();
+      return;
+    }
+    if (_busy) return;
+    await _startOpenAiVoiceSession();
+  }
+
+  Future<void> _startOpenAiVoiceSession() async {
+    _openAiVoice.setCallbacks(
+      onInterrupted: () {
+        unawaited(_resetOpenAiPlaybackSource(stopPlayer: true));
+        _openAiPcmCoalesceTimer?.cancel();
+        if (_openAiPcmCoalesce.isNotEmpty) {
+          _openAiPcmCoalesce.takeBytes();
+        }
+        _openAiPcmQueue.clear();
+        _openAiPcmEndOfResponse = false;
+        unawaited(_player.stop());
+        _openAiSuppressTailTimer?.cancel();
+        _openAiAssistantPlaybackDepth = 0;
+        _openAiVoice.setSuppressMicToServer(false);
+      },
+      onUserTurnBoundary: () {
+        if (!mounted) return;
+        setState(() => _openAiUserIdx = null);
+      },
+      onAssistantTurnBoundary: () {
+        if (!mounted) return;
+        _flushOpenAiPcmCoalesceToQueue();
+        _openAiPcmEndOfResponse = false;
+        setState(() => _openAiAiIdx = null);
+      },
+      onUserText: (t) {
+        if (!mounted || t.trim().isEmpty) return;
+        setState(() {
+          if (_openAiUserIdx == null) {
+            _msgs.add('You: $t');
+            _openAiUserIdx = _msgs.length - 1;
+          } else {
+            _msgs[_openAiUserIdx!] = 'You: $t';
+          }
+        });
+        _scrollToBottom();
+      },
+      onAssistantTextDelta: (d) {
+        if (!mounted || d.isEmpty) return;
+        setState(() {
+          if (_openAiAiIdx == null) {
+            // User transcript often arrives after the model starts streaming; without
+            // a user row first, the AI bubble is appended and the question ends up below.
+            if (_openAiUserIdx == null) {
+              _msgs.add('You: …');
+              _openAiUserIdx = _msgs.length - 1;
+            }
+            _msgs.add('AI: $d');
+            _openAiAiIdx = _msgs.length - 1;
+          } else {
+            final cur = _msgs[_openAiAiIdx!];
+            const p = 'AI: ';
+            final rest = cur.startsWith(p) ? cur.substring(p.length) : cur;
+            _msgs[_openAiAiIdx!] = '$p$rest$d';
+          }
+        });
+        _scrollToBottom();
+      },
+      onAssistantPcmDelta: (pcm) {
+        if (!mounted) return;
+        if (!widget.settings.speakReplies || !widget.settings.ttsEnabled) {
+          return;
+        }
+        if (pcm.isEmpty) return;
+        _enqueueOpenAiPcmDelta(pcm);
+      },
+      onAssistantResponseDone: () {
+        if (!mounted) return;
+        _flushOpenAiPcmCoalesceToQueue();
+        _openAiPcmEndOfResponse = true;
+        unawaited(_drainOpenAiPcmQueue());
+      },
+    );
+
+    final ok = await _openAiVoice.startContinuousListening(
+      apiKey: OpenaiRealtimeVoiceController.apiKeyFromEnv!,
+      voice: OpenaiRealtimeVoiceController.voiceFromSettings(
+        widget.settings.voice,
+      ),
+      instructions: _buildRealtimeInstructions(),
+    );
+
+    if (!mounted) return;
+    if (ok) {
+      setState(() => _openAiListening = true);
+    } else {
+      _addErr('Could not start voice chat (mic permission or connection).');
+    }
+  }
+
+  Future<void> _stopOpenAiVoiceSession() async {
+    await _resetOpenAiPlaybackSource(stopPlayer: true);
+    _openAiPcmCoalesceTimer?.cancel();
+    if (_openAiPcmCoalesce.isNotEmpty) {
+      _openAiPcmCoalesce.takeBytes();
+    }
+    _openAiPcmQueue.clear();
+    _openAiPcmEndOfResponse = false;
+    unawaited(_player.stop());
+    _openAiSuppressTailTimer?.cancel();
+    _openAiAssistantPlaybackDepth = 0;
+    _openAiVoice.setSuppressMicToServer(false);
+    await _openAiVoice.stopContinuousListening();
+    if (!mounted) return;
+    setState(() {
+      _openAiListening = false;
+      _openAiUserIdx = null;
+      _openAiAiIdx = null;
+    });
+  }
+
+  Future<void> _interruptOpenAiAssistant() async {
+    await _resetOpenAiPlaybackSource(stopPlayer: true);
+    _openAiPcmCoalesceTimer?.cancel();
+    if (_openAiPcmCoalesce.isNotEmpty) {
+      _openAiPcmCoalesce.takeBytes();
+    }
+    _openAiPcmQueue.clear();
+    await _player.stop();
+    await _openAiVoice.cancelAssistant();
+  }
+
+  void _enqueueOpenAiPcmDelta(Uint8List pcm) {
+    _openAiPcmCoalesce.add(pcm);
+    if (_openAiPcmCoalesce.length >= _openAiPcmCoalesceMinBytes) {
+      _flushOpenAiPcmCoalesceToQueue();
+    } else {
+      _openAiPcmCoalesceTimer?.cancel();
+      _openAiPcmCoalesceTimer = Timer(_openAiPcmCoalesceMaxWait, () {
+        if (!mounted) return;
+        _flushOpenAiPcmCoalesceToQueue();
+      });
+    }
+  }
+
+  void _flushOpenAiPcmCoalesceToQueue() {
+    _openAiPcmCoalesceTimer?.cancel();
+    if (_openAiPcmCoalesce.isEmpty) return;
+    _openAiPcmQueue.add(_openAiPcmCoalesce.takeBytes());
+    unawaited(_drainOpenAiPcmQueue());
+  }
+
+  void _enterOpenAiAssistantLocalPlayback() {
+    _openAiSuppressTailTimer?.cancel();
+    _openAiAssistantPlaybackDepth++;
+    if (_openAiAssistantPlaybackDepth == 1) {
+      _openAiVoice.setSuppressMicToServer(true);
+    }
+  }
+
+  void _leaveOpenAiAssistantLocalPlayback() {
+    if (_openAiAssistantPlaybackDepth <= 0) return;
+    _openAiAssistantPlaybackDepth--;
+    if (_openAiAssistantPlaybackDepth > 0) return;
+    _openAiSuppressTailTimer?.cancel();
+    _openAiSuppressTailTimer = Timer(const Duration(milliseconds: 180), () {
+      _openAiSuppressTailTimer = null;
+      if (!mounted || _openAiAssistantPlaybackDepth != 0) return;
+      _openAiVoice.setSuppressMicToServer(false);
+    });
+  }
+
+  Future<void> _drainOpenAiPcmQueue() async {
+    if (_openAiPcmDraining) return;
+    _openAiPcmDraining = true;
+    try {
+      while (mounted && _openAiPcmQueue.isNotEmpty) {
+        if (_openAiAssistantPlaybackDepth == 0) {
+          _enterOpenAiAssistantLocalPlayback();
+        }
+        final chunk = _openAiPcmQueue.removeAt(0);
+        try {
+          await _enqueueOpenAiPcmForPlayback(
+            chunk,
+            sampleRate: _pcmPlaybackSampleRate,
+          );
+        } catch (_) {}
+      }
+    } finally {
+      _openAiPcmDraining = false;
+      if (mounted && _openAiPcmQueue.isNotEmpty) {
+        unawaited(_drainOpenAiPcmQueue());
+      } else if (mounted &&
+          _openAiPcmEndOfResponse &&
+          _openAiPcmQueue.isEmpty) {
+        final hadPlayback = _openAiAssistantPlaybackDepth > 0;
+        final targetIndex = _openAiPlaybackLastIndex;
+        _openAiPcmEndOfResponse = false;
+        if (targetIndex >= 0) {
+          await _waitForOpenAiPlaybackThrough(targetIndex);
+          await _resetOpenAiPlaybackSource(stopPlayer: false);
+        }
+        if (hadPlayback) {
+          _leaveOpenAiAssistantLocalPlayback();
+        }
+      }
+    }
+  }
+
+  Future<void> _ensureOpenAiPlaybackSource() async {
+    if (_openAiPlaybackSource != null) return;
+    _openAiPlaybackSource = ConcatenatingAudioSource(
+      useLazyPreparation: true,
+      children: [],
+    );
+    _openAiPlaybackLastIndex = -1;
+  }
+
+  Future<void> _resetOpenAiPlaybackSource({required bool stopPlayer}) async {
+    if (stopPlayer) {
+      try {
+        await _player.stop();
+      } catch (_) {}
+    }
+    _openAiPlaybackSource = null;
+    _openAiPlaybackLastIndex = -1;
+  }
+
+  Future<void> _waitForOpenAiPlaybackThrough(int targetIndex) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    while (mounted) {
+      final idx = _player.currentIndex ?? -1;
+      final state = _player.processingState;
+      if (idx > targetIndex) return;
+      if (idx == targetIndex && state == ProcessingState.completed) return;
+      if (idx == -1 && state == ProcessingState.idle && !_player.playing) {
+        return;
+      }
+      if (DateTime.now().isAfter(deadline)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+  }
+
+  Future<void> _enqueueOpenAiPcmForPlayback(
+    Uint8List pcm16, {
+    required int sampleRate,
+  }) async {
+    final wav = _wrapPcm16ToWav(
+      pcm16,
+      sampleRate: sampleRate,
+      numChannels: _pcmChannels,
+    );
+    final file = File(
+      '${Directory.systemTemp.path}/roaddogg_reply_${DateTime.now().millisecondsSinceEpoch}.wav',
+    );
+    await file.writeAsBytes(wav, flush: true);
+    await _ensureOpenAiPlaybackSource();
+    final source = _openAiPlaybackSource;
+    if (source == null) return;
+    final audioSource = AudioSource.uri(Uri.file(file.path));
+    if (source.children.isEmpty) {
+      await source.add(audioSource);
+      _openAiPlaybackLastIndex = 0;
+      await _player.setAudioSource(
+        source,
+        preload: true,
+      );
+    } else {
+      await source.add(audioSource);
+      _openAiPlaybackLastIndex = source.children.length - 1;
+    }
+    if (!_player.playing) {
+      await _player.play();
+    }
+  }
+
   Future<void> _startHoldToTalk() async {
     if (_busy) return;
+    await _startHoldToTalkWithStt();
+  }
 
+  Future<void> _startHoldToTalkWithStt() async {
     if (mounted) {
       setState(() {
         _isHolding = true;
@@ -180,10 +516,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     if (_busy) return;
 
     if (mounted) {
-      setState(() {
-        _isHolding = false;
-        _busy = false;
-      });
+      setState(() => _isHolding = false);
     }
 
     try {
@@ -228,13 +561,19 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     final t = text.trim();
     if (t.isEmpty || _busy) return;
 
-    _addMsg('You: $t');
+    if (mounted) {
+      setState(() {
+        _busy = true;
+        _msgs.add('You: $t');
+      });
+    }
 
     final handled = await _handleImmediateIntent(t);
-    if (handled) return;
-
-    if (mounted) {
-      setState(() => _busy = true);
+    if (handled) {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+      return;
     }
 
     int? aiIndex;
@@ -258,10 +597,13 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
 
       if (mounted && bubbleIdx < _msgs.length) {
         final line = _msgs[bubbleIdx];
+        final fallback = res.text.trim();
         if (line == 'AI: ' || line == 'AI:') {
           setState(() {
-            _msgs[bubbleIdx] =
-                'AI: ${res.text.trim().isEmpty || res.text.trim() == 'OK' ? 'OK' : res.text.trim()}';
+            final body = fallback.isEmpty || fallback == 'OK'
+                ? '(No text in stream — check backend / network.)'
+                : fallback;
+            _msgs[bubbleIdx] = 'AI: $body';
           });
         }
       }
@@ -745,9 +1087,11 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
                           decoration: InputDecoration(
                             hintText: _busy
                                 ? 'Working...'
-                                : _isHolding
-                                    ? 'Listening...'
-                                    : 'Message RoadDogg AI',
+                                : _openAiListening
+                                    ? 'Voice chat on — tap mic to stop'
+                                    : _isHolding
+                                        ? 'Listening...'
+                                        : 'Message RoadDogg AI',
                             hintStyle: TextStyle(
                               color: hintColor,
                               fontSize: 15,
@@ -762,18 +1106,45 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
+                      if (_useOpenAiVoice && _openAiListening) ...[
+                        GestureDetector(
+                          onTap: _interruptOpenAiAssistant,
+                          child: Container(
+                            width: 46,
+                            height: 46,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFB71C1C),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: const Color(0xFF7F0000),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.stop_rounded,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       GestureDetector(
-                        onLongPressStart: (_) => _startHoldToTalk(),
-                        onLongPressEnd: (_) => _stopHoldToTalkAndSend(),
+                        onTap: _useOpenAiVoice ? _toggleOpenAiVoice : null,
+                        onLongPressStart:
+                            _useOpenAiVoice ? null : (_) => _startHoldToTalk(),
+                        onLongPressEnd: _useOpenAiVoice
+                            ? null
+                            : (_) => _stopHoldToTalkAndSend(),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 180),
                           width: 46,
                           height: 46,
                           decoration: BoxDecoration(
-                            color: _isHolding ? Colors.black : surface,
+                            color: (_openAiListening || _isHolding)
+                                ? Colors.black
+                                : surface,
                             borderRadius: BorderRadius.circular(14),
                             border: Border.all(
-                              color: _isHolding
+                              color: (_openAiListening || _isHolding)
                                   ? Colors.black
                                   : (isDark
                                       ? const Color(0xFF2E2E2E)
@@ -781,8 +1152,12 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
                             ),
                           ),
                           child: Icon(
-                            _isHolding ? Icons.mic : Icons.mic_none,
-                            color: _isHolding ? Colors.white : textColor,
+                            (_openAiListening || _isHolding)
+                                ? Icons.mic
+                                : Icons.mic_none,
+                            color: (_openAiListening || _isHolding)
+                                ? Colors.white
+                                : textColor,
                           ),
                         ),
                       ),
@@ -810,11 +1185,15 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(
-                _isHolding
-                    ? 'Listening... release to send'
-                    : _busy
-                        ? 'Working on your request...'
-                        : 'Hold mic for voice or type a message',
+                _openAiListening
+                    ? 'Hands-free voice · tap mic to end · Stop interrupts the reply'
+                    : _isHolding
+                        ? 'Listening... release to send'
+                        : _busy
+                            ? 'Working on your request...'
+                            : _useOpenAiVoice
+                                ? 'Tap mic for hands-free voice, or type a message'
+                                : 'Hold mic for voice or type a message',
                 style: TextStyle(
                   color: hintColor,
                   fontSize: 12,

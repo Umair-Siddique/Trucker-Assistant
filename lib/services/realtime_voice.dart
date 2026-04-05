@@ -218,6 +218,7 @@ class RealtimeVoiceClient {
       Uint8List? audioBytes;
       String? audioFormat;
       int? pcmSampleRate;
+      String? doneFullText;
 
       await for (final chunk in streamed.stream.transform(utf8.decoder)) {
         carry += chunk;
@@ -239,7 +240,12 @@ class RealtimeVoiceClient {
             metaIntent = _intentFromJson(data['intent']);
           }
           if (eventName == 'delta') {
-            final d = (data['text'] ?? '').toString();
+            final d = (data['text'] ??
+                    data['delta'] ??
+                    data['content'] ??
+                    data['message'] ??
+                    '')
+                .toString();
             if (d.isNotEmpty) {
               acc.write(d);
               final full = acc.toString();
@@ -250,6 +256,20 @@ class RealtimeVoiceClient {
             }
           }
           if (eventName == 'done') {
+            final fromDone = (data['text'] ??
+                    data['message'] ??
+                    data['content'] ??
+                    data['answer'] ??
+                    '')
+                .toString()
+                .trim();
+            if (fromDone.isNotEmpty) {
+              doneFullText = fromDone;
+              acc.clear();
+              acc.write(fromDone);
+              onTextUpdate(fromDone);
+              _textController.add(fromDone);
+            }
             // Optional: backend may include final fields and audio for TTS-after-streaming.
             final af = (data['audioFormat'] ?? '').toString().trim();
             if (af.isNotEmpty) audioFormat = af.toLowerCase();
@@ -264,7 +284,10 @@ class RealtimeVoiceClient {
         }
       }
 
-      final text = acc.toString().trim();
+      var text = acc.toString().trim();
+      if (text.isEmpty && doneFullText != null && doneFullText.isNotEmpty) {
+        text = doneFullText;
+      }
       return RealtimeVoiceResult(
         text: text.isEmpty ? 'OK' : text,
         audioBytes: audioBytes,
