@@ -47,6 +47,10 @@ class OpenaiRealtimeVoiceController {
   /// so speaker output is not transcribed as the user (half-duplex guard).
   bool _suppressMicToServer = false;
 
+  /// True while the API is still generating an assistant response (between deltas and [responseDone]).
+  /// Avoids calling [cancelResponse] when nothing is active (iOS would log `response_cancel_not_active`).
+  bool _responseGenerationActive = false;
+
   static const _recordConfig = RecordConfig(
     encoder: AudioEncoder.pcm16bits,
     sampleRate: 24000,
@@ -92,6 +96,7 @@ class OpenaiRealtimeVoiceController {
   }
 
   Future<void> dispose() async {
+    _responseGenerationActive = false;
     _suppressMicToServer = false;
     _micGeneration++;
     _micPumpRunning = false;
@@ -312,6 +317,7 @@ class OpenaiRealtimeVoiceController {
     _handlersAttached = true;
 
     client.on(RealtimeEventType.conversationInterrupted, (_) {
+      _responseGenerationActive = false;
       _onInterrupted?.call();
     });
 
@@ -337,10 +343,14 @@ class OpenaiRealtimeVoiceController {
             _onAssistantTurnBoundary?.call();
           }
           final piece = delta?.text ?? delta?.transcript;
+          final pcm = delta?.audio;
+          if ((piece != null && piece.isNotEmpty) ||
+              (pcm != null && pcm.isNotEmpty)) {
+            _responseGenerationActive = true;
+          }
           if (piece != null && piece.isNotEmpty) {
             _onAssistantTextDelta?.call(piece);
           }
-          final pcm = delta?.audio;
           if (pcm != null && pcm.isNotEmpty) {
             _onAssistantPcmDelta?.call(pcm);
           }
@@ -349,10 +359,15 @@ class OpenaiRealtimeVoiceController {
     });
 
     client.realtime.on(RealtimeEventType.responseDone, (_) {
+      _responseGenerationActive = false;
       _onAssistantResponseDone?.call();
     });
 
     client.realtime.on(RealtimeEventType.error, (ev) {
+      final msg = ev.toString();
+      if (msg.contains('response_cancel_not_active')) {
+        return;
+      }
       debugPrint('OpenAI Realtime error: $ev');
     });
   }
@@ -475,6 +490,7 @@ class OpenaiRealtimeVoiceController {
 
   /// Stop microphone streaming and close the Realtime connection.
   Future<void> stopContinuousListening() async {
+    _responseGenerationActive = false;
     _suppressMicToServer = false;
     _micGeneration++;
     _micPumpRunning = false;
@@ -499,10 +515,13 @@ class OpenaiRealtimeVoiceController {
 
   /// Stop the model from generating / truncate current assistant audio (ChatGPT-style Stop).
   Future<void> cancelAssistant() async {
+    if (!_responseGenerationActive) return;
     try {
       await _client?.cancelResponse(null);
     } catch (e, st) {
       debugPrint('cancelAssistant: $e\n$st');
+    } finally {
+      _responseGenerationActive = false;
     }
   }
 }

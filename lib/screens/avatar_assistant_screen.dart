@@ -49,6 +49,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   /// Half-duplex: suppress uplink while local assistant audio plays (avoids mic picking up speaker).
   int _openAiAssistantPlaybackDepth = 0;
   Timer? _openAiSuppressTailTimer;
+  DateTime? _lastOpenAiInterruptTap;
 
   /// Stream assistant PCM as deltas arrive (not after response completes).
   final List<Uint8List> _openAiPcmQueue = [];
@@ -294,6 +295,13 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   }
 
   Future<void> _interruptOpenAiAssistant() async {
+    final now = DateTime.now();
+    if (_lastOpenAiInterruptTap != null &&
+        now.difference(_lastOpenAiInterruptTap!) <
+            const Duration(milliseconds: 500)) {
+      return;
+    }
+    _lastOpenAiInterruptTap = now;
     await _resetOpenAiPlaybackSource(stopPlayer: true);
     _openAiPcmCoalesceTimer?.cancel();
     if (_openAiPcmCoalesce.isNotEmpty) {
@@ -337,7 +345,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     _openAiAssistantPlaybackDepth--;
     if (_openAiAssistantPlaybackDepth > 0) return;
     _openAiSuppressTailTimer?.cancel();
-    _openAiSuppressTailTimer = Timer(const Duration(milliseconds: 180), () {
+    _openAiSuppressTailTimer = Timer(const Duration(milliseconds: 320), () {
       _openAiSuppressTailTimer = null;
       if (!mounted || _openAiAssistantPlaybackDepth != 0) return;
       _openAiVoice.setSuppressMicToServer(false);
@@ -400,18 +408,38 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     _openAiPlaybackLastIndex = -1;
   }
 
+  /// Waits until [just_audio] finishes the last queued segment.
+  ///
+  /// iOS often reports `idle` / `currentIndex == -1` briefly before playback starts; an early
+  /// return here used to release mic suppression while the speaker was still playing, which
+  /// made server VAD hear the assistant and **cut the reply off** mid-sentence.
   Future<void> _waitForOpenAiPlaybackThrough(int targetIndex) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 20));
-    while (mounted) {
+    if (targetIndex < 0) return;
+    final deadline = DateTime.now().add(const Duration(seconds: 45));
+    var haveSeenPlaying = false;
+    while (mounted && DateTime.now().isBefore(deadline)) {
+      final playing = _player.playing;
       final idx = _player.currentIndex ?? -1;
       final state = _player.processingState;
+      if (playing) haveSeenPlaying = true;
+
       if (idx > targetIndex) return;
+
       if (idx == targetIndex && state == ProcessingState.completed) return;
-      if (idx == -1 && state == ProcessingState.idle && !_player.playing) {
-        return;
+
+      if (!playing && state == ProcessingState.completed) {
+        if (idx == targetIndex || idx == -1 || idx > targetIndex) {
+          return;
+        }
       }
-      if (DateTime.now().isAfter(deadline)) return;
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      if (haveSeenPlaying &&
+          !playing &&
+          (state == ProcessingState.completed || state == ProcessingState.idle)) {
+        if (idx >= targetIndex || idx == -1) return;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 24));
     }
   }
 
