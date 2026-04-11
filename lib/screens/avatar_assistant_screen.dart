@@ -58,6 +58,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   /// sentence-by-sentence as text streams (no waiting for server audio / no just_audio concat).
   String _openAiTtsRemainder = '';
   Future<void> _openAiTtsChain = Future<void>.value();
+  /// Bumped to drop any [.then] callbacks still chained from before (replacing the Future alone
+  /// does not cancel them).
+  int _openAiLocalTtsGen = 0;
   static final RegExp _openAiTtsSentence = RegExp(r'^(.+?[\.\!\?\n])\s*');
 
   StreamSubscription<PlayerState>? _openAiPlayerStateSub;
@@ -129,9 +132,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     unawaited(_openAiPlayerStateSub?.cancel());
     _openAiPlayerStateSub = null;
     unawaited(_resetOpenAiPlaybackSource(stopPlayer: true));
-    unawaited(_openAiFlutterTts.stop());
-    _openAiTtsRemainder = '';
-    _openAiTtsChain = Future<void>.value();
     _openAiSuppressTailTimer?.cancel();
     _openAiVoice.setSuppressMicToServer(false);
     if (_openAiListening) {
@@ -208,15 +208,14 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     _openAiVoice.setCallbacks(
       onUserTurnBoundary: () {
         if (!mounted) return;
+        // New user utterance: stop reading any previous assistant reply.
+        unawaited(_hardStopOpenAiLocalTtsQueue());
         setState(() => _openAiUserIdx = null);
       },
       onAssistantTurnBoundary: () {
         if (!mounted) return;
-        final tail = _openAiTtsRemainder.trim();
-        _openAiTtsRemainder = '';
-        if (tail.isNotEmpty) {
-          _enqueueOpenAiLocalTts(tail);
-        }
+        // New assistant item: drop queued lines from the prior item (chain reset is not enough).
+        unawaited(_hardStopOpenAiLocalTtsQueue());
         setState(() => _openAiAiIdx = null);
       },
       onUserText: (t) {
@@ -295,13 +294,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
 
   Future<void> _stopOpenAiVoiceSession() async {
     await _resetOpenAiPlaybackSource(stopPlayer: true);
-    await _openAiFlutterTts.pause();
-    _openAiTtsRemainder = '';
-    _openAiTtsChain = Future<void>.value();
-    unawaited(_player.stop());
-    _openAiSuppressTailTimer?.cancel();
-    _openAiAssistantPlaybackDepth = 0;
-    _openAiVoice.setSuppressMicToServer(false);
     await _openAiVoice.stopContinuousListening();
     if (!mounted) return;
     setState(() {
@@ -320,13 +312,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     }
     _lastOpenAiInterruptTap = now;
     await _resetOpenAiPlaybackSource(stopPlayer: true);
-    _openAiTtsRemainder = '';
-    _openAiTtsChain = Future<void>.value();
-    _openAiSuppressTailTimer?.cancel();
-    _openAiAssistantPlaybackDepth = 0;
-    _openAiVoice.setSuppressMicToServer(false);
-    await _openAiFlutterTts.stop();
-    await _player.stop();
     await _openAiVoice.cancelAssistant();
   }
 
@@ -375,9 +360,12 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   void _enqueueOpenAiLocalTts(String line) {
     final t = line.trim();
     if (t.isEmpty) return;
+    final gen = _openAiLocalTtsGen;
     _openAiTtsChain = _openAiTtsChain
-        .then((_) => _speakOpenAiLocalTtsLine(t))
-        .catchError((Object e, StackTrace st) {
+        .then((_) async {
+      if (!mounted || gen != _openAiLocalTtsGen) return;
+      await _speakOpenAiLocalTtsLine(t);
+    }).catchError((Object e, StackTrace st) {
       debugPrint('OpenAI local TTS: $e\n$st');
     });
   }
@@ -424,12 +412,27 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     });
   }
 
+  /// Stops [just_audio], clears OpenAI TTS queue (generation bump), and stops the TTS engine.
+  Future<void> _hardStopOpenAiLocalTtsQueue() async {
+    _openAiLocalTtsGen++;
+    _openAiTtsRemainder = '';
+    _openAiTtsChain = Future<void>.value();
+    _openAiSuppressTailTimer?.cancel();
+    _openAiSuppressTailTimer = null;
+    _openAiAssistantPlaybackDepth = 0;
+    _openAiVoice.setSuppressMicToServer(false);
+    try {
+      await _openAiFlutterTts.stop();
+    } catch (_) {}
+  }
+
   Future<void> _resetOpenAiPlaybackSource({required bool stopPlayer}) async {
     if (stopPlayer) {
       try {
         await _player.stop();
       } catch (_) {}
     }
+    await _hardStopOpenAiLocalTtsQueue();
   }
 
   Future<void> _startHoldToTalk() async {
