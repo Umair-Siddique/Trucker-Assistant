@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
@@ -21,6 +22,13 @@ typedef OpenaiVoicePcmCallback = void Function(Uint8List chunk);
 /// voice-communication session and **restarts** the PCM stream whenever it ends while listening.
 class OpenaiRealtimeVoiceController {
   OpenaiRealtimeVoiceController();
+
+  /// Set false to silence all realtime-voice diagnostics.
+  static bool verboseLogging = true;
+
+  /// When true (default), each log is also sent with [debugPrint] so `flutter run` in a terminal
+  /// shows them. [developer.log] alone often does **not** appear there for iOS device runs.
+  static bool mirrorLogsToTerminal = true;
 
   RealtimeClient? _client;
   final AudioRecorder _recorder = AudioRecorder();
@@ -51,6 +59,13 @@ class OpenaiRealtimeVoiceController {
   /// Avoids calling [cancelResponse] when nothing is active (iOS would log `response_cancel_not_active`).
   bool _responseGenerationActive = false;
 
+  StreamSubscription<AudioInterruptionEvent>? _audioInterruptionSub;
+  StreamSubscription<void>? _audioBecomingNoisySub;
+  StreamSubscription<AudioDevicesChangedEvent>? _audioDevicesChangedSub;
+
+  int _micStreamEpoch = 0;
+  int _appendInputAudioErrors = 0;
+
   static const _recordConfig = RecordConfig(
     encoder: AudioEncoder.pcm16bits,
     sampleRate: 24000,
@@ -65,6 +80,77 @@ class OpenaiRealtimeVoiceController {
           ? dotenv.env['OPENAI_API_KEY']!.trim()
           : null;
 
+  static String get _platformLabel {
+    if (kIsWeb) return 'web';
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+        return 'ios';
+      case TargetPlatform.android:
+        return 'android';
+      default:
+        return defaultTargetPlatform.name;
+    }
+  }
+
+  void _rtLog(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    if (!verboseLogging) return;
+    final line = '[OpenaiRealtimeVoice][$_platformLabel] $message';
+    developer.log(
+      line,
+      name: 'OpenaiRealtimeVoice',
+      error: error,
+      stackTrace: stackTrace,
+    );
+    if (mirrorLogsToTerminal) {
+      debugPrint(line);
+      if (error != null) {
+        debugPrint('[OpenaiRealtimeVoice] error: $error');
+      }
+      if (stackTrace != null) {
+        debugPrint(stackTrace.toString());
+      }
+    }
+  }
+
+  Future<void> _ensureAudioSessionDebugListeners() async {
+    if (kIsWeb) return;
+    if (_audioInterruptionSub != null) return;
+    try {
+      final session = await AudioSession.instance;
+      _audioInterruptionSub = session.interruptionEventStream.listen((e) {
+        _rtLog(
+          'audio_session interruption begin=${e.begin} type=${e.type}',
+        );
+      });
+      _audioBecomingNoisySub = session.becomingNoisyEventStream.listen((_) {
+        _rtLog('audio_session becomingNoisy (e.g. route unplugged)');
+      });
+      _audioDevicesChangedSub =
+          session.devicesChangedEventStream.listen((e) {
+        _rtLog(
+          'audio_session devicesChanged '
+          'added=${e.devicesAdded.length} removed=${e.devicesRemoved.length}',
+        );
+      });
+      _rtLog('audio_session debug listeners attached');
+    } catch (e, st) {
+      _rtLog('audio_session debug listeners failed', error: e, stackTrace: st);
+    }
+  }
+
+  Future<void> _tearDownAudioSessionDebugListeners() async {
+    await _audioInterruptionSub?.cancel();
+    await _audioBecomingNoisySub?.cancel();
+    await _audioDevicesChangedSub?.cancel();
+    _audioInterruptionSub = null;
+    _audioBecomingNoisySub = null;
+    _audioDevicesChangedSub = null;
+  }
+
   static Voice voiceFromSettings(String raw) {
     final s = raw.trim().toLowerCase();
     for (final v in Voice.values) {
@@ -74,7 +160,9 @@ class OpenaiRealtimeVoiceController {
   }
 
   void setSuppressMicToServer(bool suppress) {
+    final was = _suppressMicToServer;
     _suppressMicToServer = suppress;
+    _rtLog('setSuppressMicToServer suppress=$suppress (was $was)');
   }
 
   void setCallbacks({
@@ -96,6 +184,7 @@ class OpenaiRealtimeVoiceController {
   }
 
   Future<void> dispose() async {
+    _rtLog('dispose');
     _responseGenerationActive = false;
     _suppressMicToServer = false;
     _micGeneration++;
@@ -111,6 +200,7 @@ class OpenaiRealtimeVoiceController {
     _handlersAttached = false;
     _lastUserItemId = null;
     _lastAssistantItemId = null;
+    await _tearDownAudioSessionDebugListeners();
     await _deactivateVoiceAudioSession();
   }
 
@@ -137,17 +227,26 @@ class OpenaiRealtimeVoiceController {
         ),
       );
       await session.setActive(true);
+      _rtLog(
+        'voice audio session active '
+        '(category=playAndRecord mode=spokenAudio)',
+      );
+      await _ensureAudioSessionDebugListeners();
     } catch (e, st) {
-      debugPrint('OpenAI voice audio session: $e\n$st');
+      _rtLog('voice audio session configure/active failed', error: e, stackTrace: st);
     }
   }
 
   Future<void> _deactivateVoiceAudioSession() async {
     if (kIsWeb) return;
+    await _tearDownAudioSessionDebugListeners();
     try {
       final session = await AudioSession.instance;
       await session.setActive(false);
-    } catch (_) {}
+      _rtLog('voice audio session setActive(false)');
+    } catch (e, st) {
+      _rtLog('voice audio session deactivate failed', error: e, stackTrace: st);
+    }
   }
 
   Future<bool> _ensureSession({
@@ -158,6 +257,7 @@ class OpenaiRealtimeVoiceController {
     if (kIsWeb) return false;
 
     if (_client != null && _client!.isConnected()) {
+      _rtLog('_ensureSession reusing connection, updateSession');
       await _client!.updateSession(voice: voice, instructions: instructions);
       return true;
     }
@@ -168,35 +268,55 @@ class OpenaiRealtimeVoiceController {
     _lastUserItemId = null;
     _lastAssistantItemId = null;
 
-    final client = RealtimeClient(apiKey: apiKey);
-    _client = client;
+    try {
+      final client = RealtimeClient(apiKey: apiKey, debug: verboseLogging);
+      _client = client;
+      _rtLog('RealtimeClient created debug=$verboseLogging');
 
-    await _registerTools(client);
+      await _registerTools(client);
 
-    await client.updateSession(
-      modalities: const [Modality.text, Modality.audio],
-      instructions: instructions,
-      voice: voice,
-      inputAudioFormat: AudioFormat.pcm16,
-      outputAudioFormat: AudioFormat.pcm16,
-      turnDetection: const TurnDetection(
-        type: TurnDetectionType.serverVad,
-        threshold: 0.5,
-        prefixPaddingMs: 300,
-        silenceDurationMs: 650,
-        createResponse: true,
-      ),
-      inputAudioTranscription: const InputAudioTranscriptionConfig(
-        model: 'whisper-1',
-      ),
-      temperature: 0.7,
-    );
+      await client.updateSession(
+        modalities: const [Modality.text, Modality.audio],
+        instructions: instructions,
+        voice: voice,
+        inputAudioFormat: AudioFormat.pcm16,
+        outputAudioFormat: AudioFormat.pcm16,
+        turnDetection: const TurnDetection(
+          type: TurnDetectionType.serverVad,
+          threshold: 0.5,
+          prefixPaddingMs: 300,
+          silenceDurationMs: 650,
+          createResponse: true,
+        ),
+        inputAudioTranscription: const InputAudioTranscriptionConfig(
+          model: 'whisper-1',
+        ),
+        temperature: 0.7,
+      );
 
-    final ok = await client.connect();
-    if (!ok) return false;
-    await client.waitForSessionCreated();
-    _attachHandlers(client);
-    return true;
+      final ok = await client.connect();
+      if (!ok) {
+        _rtLog('realtime connect() returned false');
+        await client.disconnect();
+        _client = null;
+        _handlersAttached = false;
+        return false;
+      }
+      await client.waitForSessionCreated();
+      _rtLog('realtime session created connected=${client.isConnected()}');
+      _attachHandlers(client);
+      return true;
+    } catch (e, st) {
+      _rtLog('_ensureSession failed', error: e, stackTrace: st);
+      try {
+        await _client?.disconnect();
+      } catch (_) {}
+      _client = null;
+      _handlersAttached = false;
+      _lastUserItemId = null;
+      _lastAssistantItemId = null;
+      return false;
+    }
   }
 
   Future<void> _registerTools(RealtimeClient client) async {
@@ -315,8 +435,19 @@ class OpenaiRealtimeVoiceController {
   void _attachHandlers(RealtimeClient client) {
     if (_handlersAttached) return;
     _handlersAttached = true;
+    _rtLog('handlers attached');
 
     client.on(RealtimeEventType.conversationInterrupted, (_) {
+      _rtLog(
+        'conversationInterrupted '
+        'responseGenWas=$_responseGenerationActive micRunning=$_micPumpRunning',
+      );
+      // iOS often emits this before any assistant audio; treating it like a user
+      // barge-in clears [just_audio] state and causes mid-reply cutoffs.
+      if (!_responseGenerationActive) {
+        _rtLog('conversationInterrupted ignored (no active assistant response)');
+        return;
+      }
       _responseGenerationActive = false;
       _onInterrupted?.call();
     });
@@ -331,15 +462,21 @@ class OpenaiRealtimeVoiceController {
         if (msg.role == ItemRole.user) {
           if (id != _lastUserItemId) {
             _lastUserItemId = id;
+            _rtLog('user turn boundary itemId=$id');
             _onUserTurnBoundary?.call();
           }
           final t = delta?.transcript;
           if (t != null && t.trim().isNotEmpty) {
+            _rtLog(
+              'user transcript delta len=${t.trim().length} '
+              'preview=${_previewForLog(t.trim(), 48)}',
+            );
             _onUserText?.call(t.trim());
           }
         } else if (msg.role == ItemRole.assistant) {
           if (id != _lastAssistantItemId) {
             _lastAssistantItemId = id;
+            _rtLog('assistant turn boundary itemId=$id');
             _onAssistantTurnBoundary?.call();
           }
           final piece = delta?.text ?? delta?.transcript;
@@ -349,16 +486,29 @@ class OpenaiRealtimeVoiceController {
             _responseGenerationActive = true;
           }
           if (piece != null && piece.isNotEmpty) {
+            _rtLog(
+              'assistant text delta len=${piece.length} '
+              'preview=${_previewForLog(piece, 48)}',
+            );
             _onAssistantTextDelta?.call(piece);
           }
           if (pcm != null && pcm.isNotEmpty) {
+            _rtLog('assistant pcm delta bytes=${pcm.length}');
             _onAssistantPcmDelta?.call(pcm);
           }
         }
+      } else if (wrapped != null) {
+        _rtLog(
+          'conversationUpdated unhandled item type=${wrapped.item.runtimeType}',
+        );
       }
     });
 
     client.realtime.on(RealtimeEventType.responseDone, (_) {
+      _rtLog(
+        'responseDone responseGenWas=$_responseGenerationActive '
+        'micRunning=$_micPumpRunning suppressMic=$_suppressMicToServer',
+      );
       _responseGenerationActive = false;
       _onAssistantResponseDone?.call();
     });
@@ -366,19 +516,30 @@ class OpenaiRealtimeVoiceController {
     client.realtime.on(RealtimeEventType.error, (ev) {
       final msg = ev.toString();
       if (msg.contains('response_cancel_not_active')) {
+        _rtLog('realtime error (ignored): response_cancel_not_active');
         return;
       }
-      debugPrint('OpenAI Realtime error: $ev');
+      _rtLog('realtime error: $ev');
     });
+  }
+
+  static String _previewForLog(String s, int maxChars) {
+    if (s.length <= maxChars) return s.replaceAll('\n', ' ');
+    return '${s.replaceAll('\n', ' ').substring(0, maxChars)}…';
   }
 
   /// Keeps sending mic PCM while [_micPumpRunning] and the socket stays up. Restarts after focus loss.
   Future<void> _micPumpLoop(int generation) async {
+    _rtLog(
+      'mic pump loop start gen=$generation micGen=$_micGeneration '
+      'connected=${_client?.isConnected() ?? false}',
+    );
     while (_micPumpRunning &&
         generation == _micGeneration &&
         _client != null &&
         _client!.isConnected()) {
       if (!await _recorder.hasPermission()) {
+        _rtLog('mic pump waiting: recorder hasPermission=false');
         await Future<void>.delayed(const Duration(milliseconds: 400));
         continue;
       }
@@ -389,14 +550,34 @@ class OpenaiRealtimeVoiceController {
         }
       } catch (_) {}
 
+      _micStreamEpoch++;
+      final epoch = _micStreamEpoch;
+      var chunks = 0;
+      var bytesSent = 0;
+      var firstChunkLogged = false;
       final streamDone = Completer<void>();
+      void completeStream(String reason) {
+        if (!streamDone.isCompleted) {
+          _rtLog(
+            'mic stream ended epoch=$epoch reason=$reason '
+            'chunks=$chunks bytesSent=$bytesSent appendErrors=$_appendInputAudioErrors',
+          );
+          streamDone.complete();
+        }
+      }
 
       try {
+        _rtLog('mic startStream epoch=$epoch gen=$generation');
         final stream = await _recorder.startStream(_recordConfig);
         if (!_micPumpRunning ||
             generation != _micGeneration ||
             _client == null ||
             !_client!.isConnected()) {
+          _rtLog(
+            'mic startStream aborted before listen '
+            'micRunning=$_micPumpRunning genMatch=${generation == _micGeneration} '
+            'connected=${_client?.isConnected() ?? false}',
+          );
           await _recorder.stop();
           break;
         }
@@ -408,27 +589,50 @@ class OpenaiRealtimeVoiceController {
                 chunk.isEmpty) {
               return;
             }
+            chunks++;
+            if (!firstChunkLogged) {
+              firstChunkLogged = true;
+              _rtLog(
+                'mic first pcm chunk epoch=$epoch bytes=${chunk.length} '
+                'suppressMic=$_suppressMicToServer '
+                'connected=${_client?.isConnected() ?? false}',
+              );
+            }
+            if (chunks % 250 == 0) {
+              _rtLog(
+                'mic pcm progress epoch=$epoch chunks=$chunks '
+                'bytesSent=$bytesSent suppress=$_suppressMicToServer '
+                'connected=${_client?.isConnected() ?? false}',
+              );
+            }
             try {
               final toSend = _suppressMicToServer
                   ? Uint8List(chunk.length)
                   : chunk;
+              if (!_suppressMicToServer) {
+                bytesSent += toSend.length;
+              }
               await _client?.appendInputAudio(toSend);
             } catch (e, st) {
-              debugPrint('appendInputAudio: $e\n$st');
+              _appendInputAudioErrors++;
+              _rtLog(
+                'appendInputAudio failed (count=$_appendInputAudioErrors)',
+                error: e,
+                stackTrace: st,
+              );
             }
           },
-          onDone: () {
-            if (!streamDone.isCompleted) streamDone.complete();
-          },
-          onError: (_, __) {
-            if (!streamDone.isCompleted) streamDone.complete();
+          onDone: () => completeStream('onDone'),
+          onError: (Object e, StackTrace st) {
+            _rtLog('mic stream onError', error: e, stackTrace: st);
+            completeStream('onError');
           },
           cancelOnError: false,
         );
 
         await streamDone.future;
       } catch (e, st) {
-        debugPrint('Mic stream: $e\n$st');
+        _rtLog('Mic startStream/listen failed epoch=$epoch', error: e, stackTrace: st);
       } finally {
         await _pcmSub?.cancel();
         _pcmSub = null;
@@ -443,10 +647,15 @@ class OpenaiRealtimeVoiceController {
           generation == _micGeneration &&
           _client != null &&
           _client!.isConnected()) {
+        _rtLog('mic pump scheduling stream restart after 220ms (reactivate session)');
         await Future<void>.delayed(const Duration(milliseconds: 220));
         await _activateVoiceAudioSession();
       }
     }
+    _rtLog(
+      'mic pump loop exit gen=$generation micGen=$_micGeneration '
+      'micRunning=$_micPumpRunning connected=${_client?.isConnected() ?? false}',
+    );
   }
 
   /// Start streaming mic audio; server VAD commits turns and generates replies automatically.
@@ -455,6 +664,8 @@ class OpenaiRealtimeVoiceController {
     required Voice voice,
     required String instructions,
   }) async {
+    _rtLog('startContinuousListening');
+    _appendInputAudioErrors = 0;
     final client = _client;
     if (client == null || !client.isConnected()) {
       final ok = await _ensureSession(
@@ -462,10 +673,14 @@ class OpenaiRealtimeVoiceController {
         voice: voice,
         instructions: instructions,
       );
-      if (!ok) return false;
+      if (!ok) {
+        _rtLog('startContinuousListening aborted: session not ready');
+        return false;
+      }
     }
 
     if (!await _recorder.hasPermission()) {
+      _rtLog('startContinuousListening aborted: no mic permission');
       return false;
     }
 
@@ -483,6 +698,7 @@ class OpenaiRealtimeVoiceController {
     _micGeneration++;
     final gen = _micGeneration;
     _micPumpRunning = true;
+    _rtLog('startContinuousListening ok micGen=$gen connected=${_client?.isConnected()}');
     unawaited(_micPumpLoop(gen));
 
     return true;
@@ -490,6 +706,7 @@ class OpenaiRealtimeVoiceController {
 
   /// Stop microphone streaming and close the Realtime connection.
   Future<void> stopContinuousListening() async {
+    _rtLog('stopContinuousListening');
     _responseGenerationActive = false;
     _suppressMicToServer = false;
     _micGeneration++;
@@ -515,11 +732,15 @@ class OpenaiRealtimeVoiceController {
 
   /// Stop the model from generating / truncate current assistant audio (ChatGPT-style Stop).
   Future<void> cancelAssistant() async {
-    if (!_responseGenerationActive) return;
+    if (!_responseGenerationActive) {
+      _rtLog('cancelAssistant skipped (no active response generation)');
+      return;
+    }
+    _rtLog('cancelAssistant invoking cancelResponse');
     try {
       await _client?.cancelResponse(null);
     } catch (e, st) {
-      debugPrint('cancelAssistant: $e\n$st');
+      _rtLog('cancelAssistant failed', error: e, stackTrace: st);
     } finally {
       _responseGenerationActive = false;
     }
