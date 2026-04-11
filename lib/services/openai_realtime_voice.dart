@@ -268,7 +268,13 @@ class OpenaiRealtimeVoiceController {
 
     if (_client != null && _client!.isConnected()) {
       _rtLog('_ensureSession reusing connection, updateSession');
-      await _client!.updateSession(voice: voice, instructions: instructions);
+      await _client!.updateSession(
+        modalities: const [Modality.text],
+        voice: voice,
+        instructions: instructions,
+        maxResponseOutputTokens:
+            const SessionConfigMaxResponseOutputTokens.string('inf'),
+      );
       return true;
     }
 
@@ -286,11 +292,10 @@ class OpenaiRealtimeVoiceController {
       await _registerTools(client);
 
       await client.updateSession(
-        modalities: const [Modality.text, Modality.audio],
+        modalities: const [Modality.text],
         instructions: instructions,
         voice: voice,
         inputAudioFormat: AudioFormat.pcm16,
-        outputAudioFormat: AudioFormat.pcm16,
         turnDetection: const TurnDetection(
           type: TurnDetectionType.serverVad,
           threshold: 0.5,
@@ -302,6 +307,8 @@ class OpenaiRealtimeVoiceController {
           model: 'whisper-1',
         ),
         temperature: 0.7,
+        maxResponseOutputTokens:
+            const SessionConfigMaxResponseOutputTokens.string('inf'),
       );
 
       final ok = await client.connect();

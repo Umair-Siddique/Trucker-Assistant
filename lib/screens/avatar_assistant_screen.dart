@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -28,6 +29,7 @@ class AvatarAssistantScreen extends StatefulWidget {
 class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   late RealtimeVoiceClient _rt;
   late final OpenaiRealtimeVoiceController _openAiVoice;
+  final FlutterTts _openAiFlutterTts = FlutterTts();
 
   final AudioPlayer _player = AudioPlayer();
   final ScrollController _scrollController = ScrollController();
@@ -52,10 +54,11 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   Timer? _openAiSuppressTailTimer;
   DateTime? _lastOpenAiInterruptTap;
 
-  /// Full assistant reply PCM for one Realtime response — one WAV at [onAssistantResponseDone]
-  /// so [just_audio] never drops mid-sentence across a concat playlist (iOS/Android).
-  final BytesBuilder _openAiBufferedPcm = BytesBuilder();
-  Future<void> _openAiBufferedPlayChain = Future<void>.value();
+  /// Realtime replies are text-only from the API; device [FlutterTts] reads them aloud
+  /// sentence-by-sentence as text streams (no waiting for server audio / no just_audio concat).
+  String _openAiTtsRemainder = '';
+  Future<void> _openAiTtsChain = Future<void>.value();
+  static final RegExp _openAiTtsSentence = RegExp(r'^(.+?[\.\!\?\n])\s*');
 
   StreamSubscription<PlayerState>? _openAiPlayerStateSub;
   static const bool _openAiPlaybackDebugLogs = true;
@@ -82,7 +85,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
         'playerState playing=${state.playing} '
         'processing=${state.processingState} '
         'index=${_player.currentIndex ?? -1} '
-        'pcmBufBytes=${_openAiBufferedPcm.length}',
+        'ttsRemainderLen=${_openAiTtsRemainder.length}',
       );
     });
     _openAiPlaybackLog('debug listeners attached');
@@ -109,6 +112,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _greetOnOpen();
     });
+    unawaited(_initOpenAiFlutterTts());
   }
 
   @override
@@ -125,9 +129,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     unawaited(_openAiPlayerStateSub?.cancel());
     _openAiPlayerStateSub = null;
     unawaited(_resetOpenAiPlaybackSource(stopPlayer: true));
-    if (_openAiBufferedPcm.isNotEmpty) {
-      _openAiBufferedPcm.takeBytes();
-    }
+    unawaited(_openAiFlutterTts.stop());
+    _openAiTtsRemainder = '';
+    _openAiTtsChain = Future<void>.value();
     _openAiSuppressTailTimer?.cancel();
     _openAiVoice.setSuppressMicToServer(false);
     if (_openAiListening) {
@@ -178,8 +182,8 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     final name = widget.settings.driverName.trim();
     final displayName = name.isEmpty ? driverName : name;
     return 'You are RoadDogg, an AI co-pilot for professional truck drivers. '
-        'Be brief when you can, but always generate the full spoken reply in '
-        'audio until the thought is finished—do not truncate mid-sentence. '
+        'Be brief when you can, but write complete sentences and thoughts—the '
+        'app will read your text aloud with device text-to-speech. '
         'The driver\'s name is $displayName. '
         'Use the provided tools when they want maps search, settings, driver '
         'logs, weather (including a city or radar), or to refresh weather. '
@@ -208,8 +212,11 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
       },
       onAssistantTurnBoundary: () {
         if (!mounted) return;
-        // New assistant item (e.g. after tool): new bubble only; PCM stays in
-        // [_openAiBufferedPcm] until this response's [responseDone].
+        final tail = _openAiTtsRemainder.trim();
+        _openAiTtsRemainder = '';
+        if (tail.isNotEmpty) {
+          _enqueueOpenAiLocalTts(tail);
+        }
         setState(() => _openAiAiIdx = null);
       },
       onUserText: (t) {
@@ -244,18 +251,19 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
           }
         });
         _scrollToBottom();
+        _feedOpenAiLocalTts(d);
       },
-      onAssistantPcmDelta: (pcm) {
-        if (!mounted) return;
-        if (!widget.settings.speakReplies || !widget.settings.ttsEnabled) {
-          return;
-        }
-        if (pcm.isEmpty) return;
-        _openAiBufferedPcm.add(pcm);
+      onAssistantPcmDelta: (_) {
+        // Session is text-only; server should not send PCM.
       },
       onAssistantResponseDone: () {
         if (!mounted) return;
-        _scheduleOpenAiBufferedPlayback();
+        _flushOpenAiLocalTtsTail();
+        _openAiTtsChain = _openAiTtsChain
+            .then((_) => _finishOpenAiLocalTtsResponse())
+            .catchError((Object e, StackTrace st) {
+          debugPrint('OpenAI local TTS finish: $e\n$st');
+        });
       },
     );
 
@@ -287,9 +295,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
 
   Future<void> _stopOpenAiVoiceSession() async {
     await _resetOpenAiPlaybackSource(stopPlayer: true);
-    if (_openAiBufferedPcm.isNotEmpty) {
-      _openAiBufferedPcm.takeBytes();
-    }
+    await _openAiFlutterTts.pause();
+    _openAiTtsRemainder = '';
+    _openAiTtsChain = Future<void>.value();
     unawaited(_player.stop());
     _openAiSuppressTailTimer?.cancel();
     _openAiAssistantPlaybackDepth = 0;
@@ -312,86 +320,87 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     }
     _lastOpenAiInterruptTap = now;
     await _resetOpenAiPlaybackSource(stopPlayer: true);
-    if (_openAiBufferedPcm.isNotEmpty) {
-      _openAiBufferedPcm.takeBytes();
-    }
+    _openAiTtsRemainder = '';
+    _openAiTtsChain = Future<void>.value();
+    _openAiSuppressTailTimer?.cancel();
+    _openAiAssistantPlaybackDepth = 0;
+    _openAiVoice.setSuppressMicToServer(false);
+    await _openAiFlutterTts.stop();
     await _player.stop();
     await _openAiVoice.cancelAssistant();
   }
 
-  /// After [response.done], play the full buffered PCM as one WAV (serial per reply).
-  void _scheduleOpenAiBufferedPlayback() {
-    _openAiBufferedPlayChain = _openAiBufferedPlayChain
-        .then((_) => _playSingleOpenAiResponseWav())
+  Future<void> _initOpenAiFlutterTts() async {
+    if (kIsWeb) return;
+    try {
+      await _openAiFlutterTts.setLanguage('en-US');
+      await _openAiFlutterTts.setSpeechRate(0.5);
+      await _openAiFlutterTts.setVolume(1.0);
+      await _openAiFlutterTts.setPitch(1.0);
+      await _openAiFlutterTts.awaitSpeakCompletion(true);
+    } catch (e, st) {
+      debugPrint('OpenAI FlutterTts init: $e\n$st');
+    }
+  }
+
+  void _feedOpenAiLocalTts(String chunk) {
+    if (!widget.settings.speakReplies || !widget.settings.ttsEnabled) {
+      return;
+    }
+    if (chunk.isEmpty) return;
+    _openAiTtsRemainder += chunk;
+    for (;;) {
+      final m = _openAiTtsSentence.firstMatch(_openAiTtsRemainder);
+      if (m == null) break;
+      final sentence = m.group(1)!.trim();
+      _openAiTtsRemainder = _openAiTtsRemainder.substring(m.end);
+      if (sentence.isNotEmpty) {
+        _enqueueOpenAiLocalTts(sentence);
+      }
+    }
+  }
+
+  void _flushOpenAiLocalTtsTail() {
+    if (!widget.settings.speakReplies || !widget.settings.ttsEnabled) {
+      _openAiTtsRemainder = '';
+      return;
+    }
+    final tail = _openAiTtsRemainder.trim();
+    _openAiTtsRemainder = '';
+    if (tail.isNotEmpty) {
+      _enqueueOpenAiLocalTts(tail);
+    }
+  }
+
+  void _enqueueOpenAiLocalTts(String line) {
+    final t = line.trim();
+    if (t.isEmpty) return;
+    _openAiTtsChain = _openAiTtsChain
+        .then((_) => _speakOpenAiLocalTtsLine(t))
         .catchError((Object e, StackTrace st) {
-      debugPrint('OpenAI buffered playback error: $e\n$st');
+      debugPrint('OpenAI local TTS: $e\n$st');
     });
   }
 
-  Future<void> _playSingleOpenAiResponseWav() async {
-    if (!mounted) return;
-    await Future<void>.delayed(const Duration(milliseconds: 220));
+  Future<void> _speakOpenAiLocalTtsLine(String text) async {
     if (!mounted) return;
     if (!widget.settings.speakReplies || !widget.settings.ttsEnabled) {
-      if (_openAiBufferedPcm.isNotEmpty) {
-        _openAiBufferedPcm.takeBytes();
-      }
       return;
     }
-    final pcm = _openAiBufferedPcm.takeBytes();
-    if (pcm.isEmpty) {
-      return;
-    }
-    _openAiPlaybackLog(
-      'play single WAV pcmBytes=${pcm.length} '
-      '~${(pcm.length / 2 / _pcmPlaybackSampleRate).toStringAsFixed(1)}s',
-    );
-
-    var enteredSuppression = false;
     try {
       if (_openAiAssistantPlaybackDepth == 0) {
         _enterOpenAiAssistantLocalPlayback();
-        enteredSuppression = true;
       }
-      try {
-        await _player.stop();
-      } catch (_) {}
-
-      final wav = _wrapPcm16ToWav(
-        pcm,
-        sampleRate: _pcmPlaybackSampleRate,
-        numChannels: _pcmChannels,
-      );
-      final file = File(
-        '${Directory.systemTemp.path}/roaddogg_rt_${DateTime.now().millisecondsSinceEpoch}.wav',
-      );
-      await file.writeAsBytes(wav, flush: true);
-      await _player.setFilePath(file.path);
-      await _player.play();
-      await _awaitRtWavPlaybackFinished();
+      await _openAiFlutterTts.speak(text);
     } catch (e, st) {
-      debugPrint('OpenAI response WAV play failed: $e\n$st');
-    } finally {
-      if (mounted && enteredSuppression) {
-        _leaveOpenAiAssistantLocalPlayback();
-      }
+      debugPrint('OpenAI flutter_tts.speak failed: $e\n$st');
     }
   }
 
-  Future<void> _awaitRtWavPlaybackFinished() async {
-    final t0 = DateTime.now();
-    final deadline = t0.add(const Duration(minutes: 3));
-    var seenPlaying = false;
-    while (mounted && DateTime.now().isBefore(deadline)) {
-      if (_player.playing) seenPlaying = true;
-      final s = _player.processingState;
-      if (s == ProcessingState.completed) {
-        if (seenPlaying ||
-            DateTime.now().difference(t0) > const Duration(milliseconds: 500)) {
-          return;
-        }
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 32));
+  Future<void> _finishOpenAiLocalTtsResponse() async {
+    if (!mounted) return;
+    if (_openAiAssistantPlaybackDepth > 0) {
+      _leaveOpenAiAssistantLocalPlayback();
     }
   }
 
@@ -833,23 +842,21 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   }
 
   Future<void> _playMp3Bytes(Uint8List mp3) async {
+    await _resetOpenAiPlaybackSource(stopPlayer: true);
     final file = File(
       '${Directory.systemTemp.path}/roaddogg_reply_${DateTime.now().millisecondsSinceEpoch}.mp3',
     );
     await file.writeAsBytes(mp3, flush: true);
-
-    await _player.stop();
     await _player.setFilePath(file.path);
     await _player.play();
   }
 
   Future<void> _playWavBytes(Uint8List wav) async {
+    await _resetOpenAiPlaybackSource(stopPlayer: true);
     final file = File(
       '${Directory.systemTemp.path}/roaddogg_reply_${DateTime.now().millisecondsSinceEpoch}.wav',
     );
     await file.writeAsBytes(wav, flush: true);
-
-    await _player.stop();
     await _player.setFilePath(file.path);
     await _player.play();
   }
