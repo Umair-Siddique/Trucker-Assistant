@@ -28,5 +28,11 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>This app requires microphone access to record your voice when you use voice chat or push-to-talk. Your speech is processed to power the AI assistant (transcription and voice responses) and is only collected while you are actively using these features.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app requires your location while you use it to show where you are on the map, center navigation on your position, and show weather and forecasts for your current area. Location is not collected in the background.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app requires speech recognition to turn your voice into text when you use hold-to-talk or other voice input, so the assistant can understand your message.</string>
 </dict>
 </plist>
