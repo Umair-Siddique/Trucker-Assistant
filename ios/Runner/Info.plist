@@ -28,6 +28,8 @@
 	<string>$(GOOGLE_MAPS_API_KEY)</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>RoadDogg needs the microphone for hold-to-talk.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>This app uses speech recognition to turn your voice into text when you use hold-to-talk or voice input for the assistant.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We use your location to show maps and local weather.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
