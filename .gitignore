@@ -56,7 +56,7 @@ dart_defines.json
 *.keystore
 
 # iOS sensitive
-ios/Runner/Info.plist
+# ios/Runner/Info.plist
 
 # Local/editor/temp
 .vscode/
