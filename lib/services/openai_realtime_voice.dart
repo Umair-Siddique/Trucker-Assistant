@@ -12,7 +12,6 @@ import 'map_command_bus.dart' as mapbus;
 import 'settings_command_bus.dart' as settingsbus;
 import 'weather_command_bus.dart' as weatherbus;
 
-typedef OpenaiVoiceVoidCallback = void Function();
 typedef OpenaiVoiceTextCallback = void Function(String text);
 typedef OpenaiVoicePcmCallback = void Function(Uint8List chunk);
 
@@ -35,7 +34,6 @@ class OpenaiRealtimeVoiceController {
 
   StreamSubscription<Uint8List>? _pcmSub;
 
-  VoidCallback? _onInterrupted;
   OpenaiVoiceTextCallback? _onUserText;
   OpenaiVoiceTextCallback? _onAssistantTextDelta;
   OpenaiVoicePcmCallback? _onAssistantPcmDelta;
@@ -58,6 +56,11 @@ class OpenaiRealtimeVoiceController {
   /// True while the API is still generating an assistant response (between deltas and [responseDone]).
   /// Avoids calling [cancelResponse] when nothing is active (iOS would log `response_cancel_not_active`).
   bool _responseGenerationActive = false;
+
+  /// One-shot per response: once assistant text/audio starts streaming, force uplink silence so server
+  /// VAD does not treat speaker bleed as the user talking (that fires [conversationInterrupted] and
+  /// cuts the reply mid-sentence). Reset on each [responseDone].
+  bool _assistantEchoGuardApplied = false;
 
   StreamSubscription<AudioInterruptionEvent>? _audioInterruptionSub;
   StreamSubscription<void>? _audioBecomingNoisySub;
@@ -165,8 +168,15 @@ class OpenaiRealtimeVoiceController {
     _rtLog('setSuppressMicToServer suppress=$suppress (was $was)');
   }
 
+  void _ensureAssistantEchoGuard() {
+    if (_assistantEchoGuardApplied) return;
+    _assistantEchoGuardApplied = true;
+    final was = _suppressMicToServer;
+    _suppressMicToServer = true;
+    _rtLog('assistant echo guard: suppressMic $was -> true');
+  }
+
   void setCallbacks({
-    OpenaiVoiceVoidCallback? onInterrupted,
     OpenaiVoiceTextCallback? onUserText,
     OpenaiVoiceTextCallback? onAssistantTextDelta,
     OpenaiVoicePcmCallback? onAssistantPcmDelta,
@@ -174,7 +184,6 @@ class OpenaiRealtimeVoiceController {
     VoidCallback? onUserTurnBoundary,
     VoidCallback? onAssistantTurnBoundary,
   }) {
-    _onInterrupted = onInterrupted;
     _onUserText = onUserText;
     _onAssistantTextDelta = onAssistantTextDelta;
     _onAssistantPcmDelta = onAssistantPcmDelta;
@@ -186,6 +195,7 @@ class OpenaiRealtimeVoiceController {
   Future<void> dispose() async {
     _rtLog('dispose');
     _responseGenerationActive = false;
+    _assistantEchoGuardApplied = false;
     _suppressMicToServer = false;
     _micGeneration++;
     _micPumpRunning = false;
@@ -439,17 +449,13 @@ class OpenaiRealtimeVoiceController {
 
     client.on(RealtimeEventType.conversationInterrupted, (_) {
       _rtLog(
-        'conversationInterrupted '
-        'responseGenWas=$_responseGenerationActive micRunning=$_micPumpRunning',
+        'conversationInterrupted (ignored — never clears local playback; '
+        'server VAD/speaker echo caused constant mid-reply cutoffs). '
+        'responseGen=$_responseGenerationActive suppressMic=$_suppressMicToServer',
       );
-      // iOS often emits this before any assistant audio; treating it like a user
-      // barge-in clears [just_audio] state and causes mid-reply cutoffs.
-      if (!_responseGenerationActive) {
-        _rtLog('conversationInterrupted ignored (no active assistant response)');
-        return;
-      }
-      _responseGenerationActive = false;
-      _onInterrupted?.call();
+      // [RealtimeClient] maps inputAudioBufferSpeechStarted -> this event. Forwarding it
+      // to the UI used to stop [just_audio] mid-stream. Use the in-app stop control if
+      // the driver needs to cancel.
     });
 
     client.on(RealtimeEventType.conversationUpdated, (ev) {
@@ -484,6 +490,7 @@ class OpenaiRealtimeVoiceController {
           if ((piece != null && piece.isNotEmpty) ||
               (pcm != null && pcm.isNotEmpty)) {
             _responseGenerationActive = true;
+            _ensureAssistantEchoGuard();
           }
           if (piece != null && piece.isNotEmpty) {
             _rtLog(
@@ -510,6 +517,7 @@ class OpenaiRealtimeVoiceController {
         'micRunning=$_micPumpRunning suppressMic=$_suppressMicToServer',
       );
       _responseGenerationActive = false;
+      _assistantEchoGuardApplied = false;
       _onAssistantResponseDone?.call();
     });
 
@@ -708,6 +716,7 @@ class OpenaiRealtimeVoiceController {
   Future<void> stopContinuousListening() async {
     _rtLog('stopContinuousListening');
     _responseGenerationActive = false;
+    _assistantEchoGuardApplied = false;
     _suppressMicToServer = false;
     _micGeneration++;
     _micPumpRunning = false;

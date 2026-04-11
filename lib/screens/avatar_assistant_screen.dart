@@ -52,30 +52,12 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   Timer? _openAiSuppressTailTimer;
   DateTime? _lastOpenAiInterruptTap;
 
-  /// Stream assistant PCM as deltas arrive (not after response completes).
-  final List<Uint8List> _openAiPcmQueue = [];
-  bool _openAiPcmDraining = false;
-  bool _openAiPcmEndOfResponse = false;
+  /// Full assistant reply PCM for one Realtime response — one WAV at [onAssistantResponseDone]
+  /// so [just_audio] never drops mid-sentence across a concat playlist (iOS/Android).
+  final BytesBuilder _openAiBufferedPcm = BytesBuilder();
+  Future<void> _openAiBufferedPlayChain = Future<void>.value();
 
-  /// Merge tiny API deltas into larger PCM blocks so [just_audio] is not stop/started per word.
-  final BytesBuilder _openAiPcmCoalesce = BytesBuilder();
-  Timer? _openAiPcmCoalesceTimer;
-
-  /// Keep one ExoPlayer instance alive by appending chunk files to one playlist.
-  ConcatenatingAudioSource? _openAiPlaybackSource;
-  int _openAiPlaybackLastIndex = -1;
-  final BytesBuilder _openAiResponseStartBuffer = BytesBuilder();
-  bool _openAiResponsePlaybackStarted = false;
   StreamSubscription<PlayerState>? _openAiPlayerStateSub;
-  /// When true, another drain was requested while [_openAiPcmDraining] — run again after current drain exits.
-  bool _openAiPcmDrainReschedule = false;
-
-  /// Larger chunks => fewer [ConcatenatingAudioSource] segments => less gap/break
-  /// between clips on ExoPlayer (Android) and AVPlayer (iOS). 24 kHz mono PCM16.
-  static const int _openAiPcmCoalesceMinBytes = 36000; // ~750 ms
-  static const Duration _openAiPcmCoalesceMaxWait = Duration(milliseconds: 280);
-  /// Prime first playback so the opening syllable is not starved.
-  static const int _openAiPcmStartupPrimeBytes = 38400; // ~800 ms
   static const bool _openAiPlaybackDebugLogs = true;
 
   static const String driverName = 'Gabriel';
@@ -85,17 +67,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   static const int _pcmPlaybackSampleRate = 24000;
 
   bool get _isIos => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
-
-  int get _openAiPcmCoalesceMinBytesRuntime =>
-      _isIos ? 48000 : _openAiPcmCoalesceMinBytes; // iOS ~1.0 s
-
-  Duration get _openAiPcmCoalesceMaxWaitRuntime =>
-      _isIos ? const Duration(milliseconds: 400) : _openAiPcmCoalesceMaxWait;
-
-  /// iOS: strictly above one coalesce block so the first [play] is not on a lone WAV
-  /// while AVPlayer is still priming (avoids a small break at the first syllable).
-  int get _openAiPcmStartupPrimeBytesRuntime =>
-      _isIos ? 96000 : _openAiPcmStartupPrimeBytes;
 
   void _openAiPlaybackLog(String msg) {
     if (!_openAiPlaybackDebugLogs) return;
@@ -111,8 +82,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
         'playerState playing=${state.playing} '
         'processing=${state.processingState} '
         'index=${_player.currentIndex ?? -1} '
-        'queued=${_openAiPlaybackSource?.children.length ?? 0} '
-        'queue=${_openAiPcmQueue.length}',
+        'pcmBufBytes=${_openAiBufferedPcm.length}',
       );
     });
     _openAiPlaybackLog('debug listeners attached');
@@ -155,16 +125,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     unawaited(_openAiPlayerStateSub?.cancel());
     _openAiPlayerStateSub = null;
     unawaited(_resetOpenAiPlaybackSource(stopPlayer: true));
-    _openAiPcmCoalesceTimer?.cancel();
-    if (_openAiPcmCoalesce.isNotEmpty) {
-      _openAiPcmCoalesce.takeBytes();
+    if (_openAiBufferedPcm.isNotEmpty) {
+      _openAiBufferedPcm.takeBytes();
     }
-    _openAiPcmQueue.clear();
-    if (_openAiResponseStartBuffer.isNotEmpty) {
-      _openAiResponseStartBuffer.takeBytes();
-    }
-    _openAiResponsePlaybackStarted = false;
-    _openAiPcmEndOfResponse = false;
     _openAiSuppressTailTimer?.cancel();
     _openAiVoice.setSuppressMicToServer(false);
     if (_openAiListening) {
@@ -214,8 +177,10 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   String _buildRealtimeInstructions() {
     final name = widget.settings.driverName.trim();
     final displayName = name.isEmpty ? driverName : name;
-    return 'You are RoadDogg, a concise AI co-pilot for professional truck '
-        'drivers. The driver\'s name is $displayName. '
+    return 'You are RoadDogg, an AI co-pilot for professional truck drivers. '
+        'Be brief when you can, but always generate the full spoken reply in '
+        'audio until the thought is finished—do not truncate mid-sentence. '
+        'The driver\'s name is $displayName. '
         'Use the provided tools when they want maps search, settings, driver '
         'logs, weather (including a city or radar), or to refresh weather. '
         'Do not say you opened something unless you called the matching tool.';
@@ -237,35 +202,14 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
 
   Future<void> _startOpenAiVoiceSession() async {
     _openAiVoice.setCallbacks(
-      onInterrupted: () {
-        unawaited(_resetOpenAiPlaybackSource(stopPlayer: true));
-        _openAiPcmCoalesceTimer?.cancel();
-        if (_openAiPcmCoalesce.isNotEmpty) {
-          _openAiPcmCoalesce.takeBytes();
-        }
-        _openAiPcmQueue.clear();
-        if (_openAiResponseStartBuffer.isNotEmpty) {
-          _openAiResponseStartBuffer.takeBytes();
-        }
-        _openAiResponsePlaybackStarted = false;
-        _openAiPcmEndOfResponse = false;
-        unawaited(_player.stop());
-        _openAiSuppressTailTimer?.cancel();
-        _openAiAssistantPlaybackDepth = 0;
-        _openAiVoice.setSuppressMicToServer(false);
-      },
       onUserTurnBoundary: () {
         if (!mounted) return;
         setState(() => _openAiUserIdx = null);
       },
       onAssistantTurnBoundary: () {
         if (!mounted) return;
-        _flushOpenAiPcmCoalesceToQueue();
-        if (_openAiResponseStartBuffer.isNotEmpty) {
-          _openAiResponseStartBuffer.takeBytes();
-        }
-        _openAiResponsePlaybackStarted = false;
-        _openAiPcmEndOfResponse = false;
+        // New assistant item (e.g. after tool): new bubble only; PCM stays in
+        // [_openAiBufferedPcm] until this response's [responseDone].
         setState(() => _openAiAiIdx = null);
       },
       onUserText: (t) {
@@ -307,13 +251,11 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
           return;
         }
         if (pcm.isEmpty) return;
-        _enqueueOpenAiPcmDelta(pcm);
+        _openAiBufferedPcm.add(pcm);
       },
       onAssistantResponseDone: () {
         if (!mounted) return;
-        _flushOpenAiPcmCoalesceToQueue();
-        _openAiPcmEndOfResponse = true;
-        unawaited(_drainOpenAiPcmQueue());
+        _scheduleOpenAiBufferedPlayback();
       },
     );
 
@@ -345,16 +287,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
 
   Future<void> _stopOpenAiVoiceSession() async {
     await _resetOpenAiPlaybackSource(stopPlayer: true);
-    _openAiPcmCoalesceTimer?.cancel();
-    if (_openAiPcmCoalesce.isNotEmpty) {
-      _openAiPcmCoalesce.takeBytes();
+    if (_openAiBufferedPcm.isNotEmpty) {
+      _openAiBufferedPcm.takeBytes();
     }
-    _openAiPcmQueue.clear();
-    if (_openAiResponseStartBuffer.isNotEmpty) {
-      _openAiResponseStartBuffer.takeBytes();
-    }
-    _openAiResponsePlaybackStarted = false;
-    _openAiPcmEndOfResponse = false;
     unawaited(_player.stop());
     _openAiSuppressTailTimer?.cancel();
     _openAiAssistantPlaybackDepth = 0;
@@ -377,47 +312,87 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     }
     _lastOpenAiInterruptTap = now;
     await _resetOpenAiPlaybackSource(stopPlayer: true);
-    _openAiPcmCoalesceTimer?.cancel();
-    if (_openAiPcmCoalesce.isNotEmpty) {
-      _openAiPcmCoalesce.takeBytes();
+    if (_openAiBufferedPcm.isNotEmpty) {
+      _openAiBufferedPcm.takeBytes();
     }
-    _openAiPcmQueue.clear();
-    if (_openAiResponseStartBuffer.isNotEmpty) {
-      _openAiResponseStartBuffer.takeBytes();
-    }
-    _openAiResponsePlaybackStarted = false;
     await _player.stop();
     await _openAiVoice.cancelAssistant();
   }
 
-  void _enqueueOpenAiPcmDelta(Uint8List pcm) {
-    _openAiPcmCoalesce.add(pcm);
-    if (_openAiPcmCoalesce.length >= _openAiPcmCoalesceMinBytesRuntime) {
-      _openAiPlaybackLog(
-        'coalesce flush by size bytes=${_openAiPcmCoalesce.length}',
+  /// After [response.done], play the full buffered PCM as one WAV (serial per reply).
+  void _scheduleOpenAiBufferedPlayback() {
+    _openAiBufferedPlayChain = _openAiBufferedPlayChain
+        .then((_) => _playSingleOpenAiResponseWav())
+        .catchError((Object e, StackTrace st) {
+      debugPrint('OpenAI buffered playback error: $e\n$st');
+    });
+  }
+
+  Future<void> _playSingleOpenAiResponseWav() async {
+    if (!mounted) return;
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    if (!mounted) return;
+    if (!widget.settings.speakReplies || !widget.settings.ttsEnabled) {
+      if (_openAiBufferedPcm.isNotEmpty) {
+        _openAiBufferedPcm.takeBytes();
+      }
+      return;
+    }
+    final pcm = _openAiBufferedPcm.takeBytes();
+    if (pcm.isEmpty) {
+      return;
+    }
+    _openAiPlaybackLog(
+      'play single WAV pcmBytes=${pcm.length} '
+      '~${(pcm.length / 2 / _pcmPlaybackSampleRate).toStringAsFixed(1)}s',
+    );
+
+    var enteredSuppression = false;
+    try {
+      if (_openAiAssistantPlaybackDepth == 0) {
+        _enterOpenAiAssistantLocalPlayback();
+        enteredSuppression = true;
+      }
+      try {
+        await _player.stop();
+      } catch (_) {}
+
+      final wav = _wrapPcm16ToWav(
+        pcm,
+        sampleRate: _pcmPlaybackSampleRate,
+        numChannels: _pcmChannels,
       );
-      _flushOpenAiPcmCoalesceToQueue();
-    } else {
-      _openAiPcmCoalesceTimer?.cancel();
-      _openAiPcmCoalesceTimer = Timer(_openAiPcmCoalesceMaxWaitRuntime, () {
-        if (!mounted) return;
-        _openAiPlaybackLog(
-          'coalesce flush by timer bytes=${_openAiPcmCoalesce.length}',
-        );
-        _flushOpenAiPcmCoalesceToQueue();
-      });
+      final file = File(
+        '${Directory.systemTemp.path}/roaddogg_rt_${DateTime.now().millisecondsSinceEpoch}.wav',
+      );
+      await file.writeAsBytes(wav, flush: true);
+      await _player.setFilePath(file.path);
+      await _player.play();
+      await _awaitRtWavPlaybackFinished();
+    } catch (e, st) {
+      debugPrint('OpenAI response WAV play failed: $e\n$st');
+    } finally {
+      if (mounted && enteredSuppression) {
+        _leaveOpenAiAssistantLocalPlayback();
+      }
     }
   }
 
-  void _flushOpenAiPcmCoalesceToQueue() {
-    _openAiPcmCoalesceTimer?.cancel();
-    if (_openAiPcmCoalesce.isEmpty) return;
-    final chunk = _openAiPcmCoalesce.takeBytes();
-    _openAiPcmQueue.add(chunk);
-    _openAiPlaybackLog(
-      'queue add chunkBytes=${chunk.length} queued=${_openAiPcmQueue.length}',
-    );
-    unawaited(_drainOpenAiPcmQueue());
+  Future<void> _awaitRtWavPlaybackFinished() async {
+    final t0 = DateTime.now();
+    final deadline = t0.add(const Duration(minutes: 3));
+    var seenPlaying = false;
+    while (mounted && DateTime.now().isBefore(deadline)) {
+      if (_player.playing) seenPlaying = true;
+      final s = _player.processingState;
+      if (s == ProcessingState.completed) {
+        if (seenPlaying ||
+            DateTime.now().difference(t0) > const Duration(milliseconds: 500)) {
+          return;
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 32));
+    }
   }
 
   void _enterOpenAiAssistantLocalPlayback() {
@@ -440,292 +415,12 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     });
   }
 
-  Future<void> _drainOpenAiPcmQueue() async {
-    if (_openAiPcmDraining) {
-      _openAiPcmDrainReschedule = true;
-      return;
-    }
-    _openAiPcmDraining = true;
-    _openAiPlaybackLog(
-      'drain start queued=${_openAiPcmQueue.length} '
-      'startBuf=${_openAiResponseStartBuffer.length} '
-      'started=$_openAiResponsePlaybackStarted end=$_openAiPcmEndOfResponse',
-    );
-    try {
-      while (mounted && _openAiPcmQueue.isNotEmpty) {
-        if (!_openAiResponsePlaybackStarted) {
-          _openAiResponseStartBuffer.add(_openAiPcmQueue.removeAt(0));
-          final shouldStartNow =
-              _openAiResponseStartBuffer.length >=
-                  _openAiPcmStartupPrimeBytesRuntime ||
-              (_openAiPcmEndOfResponse && _openAiPcmQueue.isEmpty);
-          if (!shouldStartNow) {
-            continue;
-          }
-          final primed = _openAiResponseStartBuffer.takeBytes();
-          if (primed.isEmpty) {
-            continue;
-          }
-          if (_openAiAssistantPlaybackDepth == 0) {
-            _enterOpenAiAssistantLocalPlayback();
-          }
-          try {
-            await _enqueueOpenAiPcmForPlayback(
-              primed,
-              sampleRate: _pcmPlaybackSampleRate,
-            );
-            _openAiResponsePlaybackStarted = true;
-            _openAiPlaybackLog(
-              'startup primed bytes=${primed.length} '
-              'threshold=$_openAiPcmStartupPrimeBytesRuntime',
-            );
-          } catch (_) {}
-          continue;
-        }
-        if (_openAiAssistantPlaybackDepth == 0) {
-          _enterOpenAiAssistantLocalPlayback();
-        }
-        final chunk = _openAiPcmQueue.removeAt(0);
-        try {
-          await _enqueueOpenAiPcmForPlayback(
-            chunk,
-            sampleRate: _pcmPlaybackSampleRate,
-          );
-        } catch (_) {}
-      }
-    } finally {
-      _openAiPcmDraining = false;
-      if (mounted && _openAiPcmQueue.isNotEmpty) {
-        unawaited(_drainOpenAiPcmQueue());
-      } else if (mounted &&
-          _openAiPcmEndOfResponse &&
-          _openAiPcmQueue.isEmpty) {
-        if (!_openAiResponsePlaybackStarted &&
-            _openAiResponseStartBuffer.isNotEmpty) {
-          final primed = _openAiResponseStartBuffer.takeBytes();
-          if (primed.isNotEmpty) {
-            if (_openAiAssistantPlaybackDepth == 0) {
-              _enterOpenAiAssistantLocalPlayback();
-            }
-            try {
-              await _enqueueOpenAiPcmForPlayback(
-                primed,
-                sampleRate: _pcmPlaybackSampleRate,
-              );
-              _openAiResponsePlaybackStarted = true;
-            } catch (_) {}
-          }
-        }
-        final hadPlayback = _openAiAssistantPlaybackDepth > 0;
-        _openAiPcmEndOfResponse = false;
-        _openAiResponsePlaybackStarted = false;
-        if (_openAiResponseStartBuffer.isNotEmpty) {
-          _openAiResponseStartBuffer.takeBytes();
-        }
-        // Wait until nothing is still being appended, then use final last index (iOS can report
-        // segment completed before later children are added — stale snapshot used to cut audio).
-        await _waitUntilOpenAiPlaybackAppendsSettled();
-        final targetIndex = _openAiPlaybackLastIndex;
-        if (targetIndex >= 0) {
-          await _waitForOpenAiPlaybackThrough(targetIndex);
-          await _resetOpenAiPlaybackSource(stopPlayer: false);
-        }
-        if (hadPlayback) {
-          _leaveOpenAiAssistantLocalPlayback();
-        }
-      }
-      if (mounted && _openAiPcmDrainReschedule) {
-        _openAiPcmDrainReschedule = false;
-        unawaited(_drainOpenAiPcmQueue());
-      }
-      _openAiPlaybackLog(
-        'drain end queued=${_openAiPcmQueue.length} '
-        'startBuf=${_openAiResponseStartBuffer.length} '
-        'started=$_openAiResponsePlaybackStarted end=$_openAiPcmEndOfResponse',
-      );
-    }
-  }
-
-  /// After [responseDone], coalesce timers and in-flight [await]s can still append PCM.
-  /// iOS AVPlayer can also report the first segment [completed] while the playlist is growing.
-  Future<void> _waitUntilOpenAiPlaybackAppendsSettled() async {
-    const step = Duration(milliseconds: 24);
-    const stableNeeded = 4;
-    var stable = 0;
-    for (var i = 0; i < 200 && mounted; i++) {
-      final busy = _openAiPcmQueue.isNotEmpty ||
-          _openAiPcmCoalesce.isNotEmpty ||
-          _openAiPcmDraining ||
-          (_openAiPcmCoalesceTimer?.isActive ?? false);
-      if (busy) {
-        stable = 0;
-      } else {
-        stable++;
-        if (stable >= stableNeeded) {
-          _openAiPlaybackLog('appends settled lastIdx=$_openAiPlaybackLastIndex');
-          return;
-        }
-      }
-      await Future<void>.delayed(step);
-    }
-    _openAiPlaybackLog(
-      'appends settle timeout lastIdx=$_openAiPlaybackLastIndex '
-      'q=${_openAiPcmQueue.length} coalesce=${_openAiPcmCoalesce.length}',
-    );
-  }
-
-  Future<void> _ensureOpenAiPlaybackSource() async {
-    if (_openAiPlaybackSource != null) return;
-    _openAiPlaybackSource = ConcatenatingAudioSource(
-      // iOS AVPlayer gaps between lazy-loaded WAV segments read as idle/completed
-      // and used to make [_waitForOpenAiPlaybackThrough] bail out early (cut audio).
-      useLazyPreparation: defaultTargetPlatform != TargetPlatform.iOS,
-      children: [],
-    );
-    _openAiPlaybackLastIndex = -1;
-  }
-
   Future<void> _resetOpenAiPlaybackSource({required bool stopPlayer}) async {
     if (stopPlayer) {
       try {
         await _player.stop();
       } catch (_) {}
     }
-    _openAiPlaybackSource = null;
-    _openAiPlaybackLastIndex = -1;
-  }
-
-  /// Waits until [just_audio] finishes the last queued segment.
-  ///
-  /// iOS often reports `idle` / `currentIndex == -1` briefly before playback starts; an early
-  /// return here used to release mic suppression while the speaker was still playing, which
-  /// made server VAD hear the assistant and **cut the reply off** mid-sentence.
-  Future<void> _waitForOpenAiPlaybackThrough(int snapshotTargetIndex) async {
-    if (snapshotTargetIndex < 0) return;
-    final deadline = DateTime.now().add(const Duration(seconds: 45));
-    var haveSeenPlaying = false;
-    // Only trust currentIndex == -1 as "past the last segment" after we've actually
-    // reached [targetIndex]; otherwise -1 appears between *earlier* children too.
-    var haveSeenIdxAtTarget = false;
-    // iOS reports currentIndex == -1 transiently between ConcatenatingAudioSource
-    // segments; debounce "done" so we do not tear down while more WAVs are queued.
-    var stableDonePolls = 0;
-    while (mounted && DateTime.now().isBefore(deadline)) {
-      // Playlist can grow after [snapshotTargetIndex] was taken — never finish early.
-      final targetIndex = snapshotTargetIndex > _openAiPlaybackLastIndex
-          ? snapshotTargetIndex
-          : _openAiPlaybackLastIndex;
-
-      if (_openAiPcmQueue.isNotEmpty ||
-          _openAiPcmCoalesce.isNotEmpty ||
-          _openAiPcmDraining ||
-          (_openAiPcmCoalesceTimer?.isActive ?? false)) {
-        stableDonePolls = 0;
-        await Future<void>.delayed(const Duration(milliseconds: 24));
-        continue;
-      }
-
-      final playing = _player.playing;
-      final idx = _player.currentIndex ?? -1;
-      final state = _player.processingState;
-      final seqLen = _player.sequenceState?.sequence.length ?? 0;
-      final playlistLen = _openAiPlaybackSource?.children.length ?? seqLen;
-      final effectiveLen = playlistLen > seqLen ? playlistLen : seqLen;
-      final onLastQueuedClip =
-          effectiveLen > 0 && targetIndex == effectiveLen - 1;
-      if (playing) haveSeenPlaying = true;
-      if (idx == targetIndex) haveSeenIdxAtTarget = true;
-
-      if (idx > targetIndex) return;
-
-      // Do not treat "completed" on an early index as done while more segments exist.
-      if (idx == targetIndex &&
-          state == ProcessingState.completed &&
-          effectiveLen > 0 &&
-          targetIndex == effectiveLen - 1) {
-        return;
-      }
-
-      if (!playing && state == ProcessingState.completed) {
-        if (idx == targetIndex || idx > targetIndex) {
-          if (effectiveLen > 0 &&
-              targetIndex == effectiveLen - 1) {
-            stableDonePolls++;
-            if (stableDonePolls >= 2) return;
-          } else {
-            stableDonePolls = 0;
-          }
-        } else if (idx == -1 &&
-            onLastQueuedClip &&
-            haveSeenPlaying &&
-            haveSeenIdxAtTarget) {
-          stableDonePolls++;
-          if (stableDonePolls >= 5) return;
-        } else {
-          stableDonePolls = 0;
-        }
-      } else {
-        stableDonePolls = 0;
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 24));
-    }
-  }
-
-  Future<void> _enqueueOpenAiPcmForPlayback(
-    Uint8List pcm16, {
-    required int sampleRate,
-  }) async {
-    final wav = _wrapPcm16ToWav(
-      pcm16,
-      sampleRate: sampleRate,
-      numChannels: _pcmChannels,
-    );
-    final file = File(
-      '${Directory.systemTemp.path}/roaddogg_reply_${DateTime.now().millisecondsSinceEpoch}.wav',
-    );
-    await file.writeAsBytes(wav, flush: true);
-    await _ensureOpenAiPlaybackSource();
-    final source = _openAiPlaybackSource;
-    if (source == null) return;
-    final audioSource = AudioSource.uri(Uri.file(file.path));
-    if (source.children.isEmpty) {
-      await source.add(audioSource);
-      _openAiPlaybackLastIndex = 0;
-      _openAiPlaybackLog('source start idx=0 bytes=${pcm16.length}');
-      await _player.setAudioSource(
-        source,
-        preload: true,
-      );
-      await _awaitIosOpenAiFirstSegmentPrimed();
-    } else {
-      await source.add(audioSource);
-      _openAiPlaybackLastIndex = source.children.length - 1;
-      _openAiPlaybackLog(
-        'source append idx=$_openAiPlaybackLastIndex bytes=${pcm16.length}',
-      );
-    }
-    if (!_player.playing) {
-      _openAiPlaybackLog('player play()');
-      await _player.play();
-    }
-  }
-
-  /// First iOS segment: avoid [play] while state is still loading/buffering (startup click/break).
-  Future<void> _awaitIosOpenAiFirstSegmentPrimed() async {
-    if (!_isIos) return;
-    final deadline = DateTime.now().add(const Duration(milliseconds: 1800));
-    while (mounted && DateTime.now().isBefore(deadline)) {
-      final s = _player.processingState;
-      if (s == ProcessingState.ready) {
-        _openAiPlaybackLog('first segment primed processing=$s');
-        return;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    }
-    _openAiPlaybackLog(
-      'first segment prime wait timeout processing=${_player.processingState}',
-    );
   }
 
   Future<void> _startHoldToTalk() async {
