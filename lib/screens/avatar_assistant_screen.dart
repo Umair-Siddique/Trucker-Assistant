@@ -1,6 +1,4 @@
-import 'dart:io';
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
@@ -13,7 +11,7 @@ import '../services/app_settings.dart';
 import '../services/logs_command_bus.dart' as logsbus;
 import '../services/map_command_bus.dart' as mapbus;
 import '../services/openai_realtime_voice.dart';
-import '../services/realtime_voice.dart';
+import '../services/openai_responses_client.dart';
 import '../services/settings_command_bus.dart' as settingsbus;
 import '../services/weather_command_bus.dart' as weatherbus;
 
@@ -27,8 +25,8 @@ class AvatarAssistantScreen extends StatefulWidget {
 }
 
 class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
-  late RealtimeVoiceClient _rt;
   late final OpenaiRealtimeVoiceController _openAiVoice;
+  final OpenAiResponsesClient _openAiText = OpenAiResponsesClient();
   final FlutterTts _openAiFlutterTts = FlutterTts();
 
   final AudioPlayer _player = AudioPlayer();
@@ -67,10 +65,7 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   static const bool _openAiPlaybackDebugLogs = true;
 
   static const String driverName = 'Gabriel';
-  static const int _pcmChannels = 1;
-
-  /// Assistant PCM from Realtime/TTS when [audioFormat] is `pcm16` (see backend `pcmSampleRate`).
-  static const int _pcmPlaybackSampleRate = 24000;
+  // (Backend audio playback removed; app uses device TTS + OpenAI Realtime.)
 
   bool get _isIos => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
@@ -97,7 +92,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   @override
   void initState() {
     super.initState();
-    _rt = RealtimeVoiceClient(baseUrl: widget.settings.backendBaseUrl);
     _openAiVoice = OpenaiRealtimeVoiceController();
     _attachOpenAiPlaybackDebugListeners();
 
@@ -121,10 +115,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   @override
   void didUpdateWidget(covariant AvatarAssistantScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.settings.backendBaseUrl != widget.settings.backendBaseUrl) {
-      _rt.dispose();
-      _rt = RealtimeVoiceClient(baseUrl: widget.settings.backendBaseUrl);
-    }
   }
 
   @override
@@ -138,7 +128,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
       unawaited(_openAiVoice.stopContinuousListening());
     }
     unawaited(_openAiVoice.dispose());
-    _rt.dispose();
     _player.dispose();
     _scrollController.dispose();
     _textController.dispose();
@@ -150,22 +139,8 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     _addMsg('AI: $greeting');
 
     if (!widget.settings.speakReplies) return;
-
-    try {
-      final res = await _rt.sendText(
-        message: greeting,
-        voice: widget.settings.voice,
-        tts: widget.settings.ttsEnabled,
-      );
-
-      _applyBackendMapIntent(res.intent);
-
-      if (widget.settings.ttsEnabled &&
-          res.audioBytes != null &&
-          res.audioBytes!.isNotEmpty) {
-        await _playMp3Bytes(res.audioBytes!);
-      }
-    } catch (_) {}
+    await _speakOpenAiLocalTtsLine(greeting);
+    await _finishOpenAiLocalTtsResponse();
   }
 
   String _timeGreeting() {
@@ -555,57 +530,33 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
       });
     }
 
-    final handled = await _handleImmediateIntent(t);
-    if (handled) {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-      return;
-    }
-
     int? aiIndex;
     try {
       _addMsg('AI: ');
       aiIndex = _msgs.length - 1;
       final bubbleIdx = aiIndex;
 
-      final res = await _rt.sendTextStream(
-        message: t,
-        voice: widget.settings.voice,
-        tts: widget.settings.ttsEnabled,
-        onTextUpdate: (accumulated) {
-          if (!mounted) return;
+      final handled = await _handleImmediateIntent(t);
+      if (handled) {
+        if (mounted) {
           setState(() {
-            _msgs[bubbleIdx] = 'AI: $accumulated';
-          });
-          _scrollToBottom();
-        },
-      );
-
-      if (mounted && bubbleIdx < _msgs.length) {
-        final line = _msgs[bubbleIdx];
-        final fallback = res.text.trim();
-        if (line == 'AI: ' || line == 'AI:') {
-          setState(() {
-            final body = fallback.isEmpty || fallback == 'OK'
-                ? '(No text in stream — check backend / network.)'
-                : fallback;
-            _msgs[bubbleIdx] = 'AI: $body';
+            _msgs[bubbleIdx] =
+                _msgs[bubbleIdx] == 'AI: ' ? 'AI: OK' : _msgs[bubbleIdx];
           });
         }
+        return;
       }
 
-      _applyBackendMapIntent(res.intent);
-
-      if (widget.settings.speakReplies &&
-          widget.settings.ttsEnabled &&
-          res.audioBytes != null &&
-          res.audioBytes!.isNotEmpty) {
-        await _playBackendAudio(
-          res.audioBytes!,
-          res.audioFormat,
-          pcmSampleRate: res.pcmSampleRate,
-        );
+      final reply = await _openAiText.reply(userText: t);
+      if (!mounted) return;
+      setState(() {
+        _msgs[bubbleIdx] = 'AI: $reply';
+      });
+      _scrollToBottom();
+      if (widget.settings.speakReplies && widget.settings.ttsEnabled) {
+        _enqueueOpenAiLocalTts(reply);
+        _flushOpenAiLocalTtsTail();
+        await _finishOpenAiLocalTtsResponse();
       }
     } catch (e) {
       if (mounted && aiIndex != null && aiIndex < _msgs.length) {
@@ -624,6 +575,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
   }
 
   Future<bool> _handleImmediateIntent(String rawText) async {
+    final mapsHandled = _handleImmediateMapIntent(rawText);
+    if (mapsHandled) return true;
+
     final settingsHandled = _handleImmediateSettingsIntent(rawText);
     if (settingsHandled) return true;
 
@@ -636,14 +590,65 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     return false;
   }
 
-  /// Open Maps only when the backend classifies [intent] as `map_search` (not client keyword guessing).
-  void _applyBackendMapIntent(Map<String, dynamic>? intent) {
-    if (intent == null) return;
-    final type = (intent['type'] ?? '').toString().trim();
-    if (type != 'map_search') return;
-    final query = (intent['query'] ?? '').toString().trim();
-    if (query.isEmpty) return;
-    mapbus.MapCommandBus.instance.search(query);
+  bool _handleImmediateMapIntent(String rawText) {
+    final text = rawText.trim();
+    final lower = text.toLowerCase();
+    if (text.isEmpty) return false;
+
+    const prefixes = [
+      'find ',
+      'find me ',
+      'show me ',
+      'take me to ',
+      'go to ',
+      'search for ',
+      'look for ',
+      'pull up ',
+    ];
+    for (final p in prefixes) {
+      if (lower.startsWith(p)) {
+        mapbus.MapCommandBus.instance.search(text);
+        _addMsg('AI: Opening maps.');
+        return true;
+      }
+    }
+
+    const keywords = [
+      'truck stop',
+      'truck stops',
+      'truckstop',
+      'truckstops',
+      'nearby truck',
+      'fuel',
+      'rest area',
+      'rest areas',
+      'hospital',
+      'walmart',
+      'chick-fil-a',
+      "love's",
+      'loves',
+      'pilot',
+      'flying j',
+      'petro',
+      'ta ',
+      'ta truck stop',
+      'parking',
+      'food',
+      'repair',
+      'repairs',
+      'in n out',
+      'restaurant',
+    ];
+
+    for (final k in keywords) {
+      if (lower.contains(k)) {
+        mapbus.MapCommandBus.instance.search(text);
+        _addMsg('AI: Opening maps.');
+        return true;
+      }
+    }
+
+    return false;
   }
 
   bool _handleImmediateSettingsIntent(String rawText) {
@@ -822,95 +827,6 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen> {
     }
 
     return null;
-  }
-
-  Future<void> _playBackendAudio(
-    Uint8List audioBytes,
-    String? audioFormat, {
-    int? pcmSampleRate,
-  }) async {
-    final fmt = (audioFormat ?? '').trim().toLowerCase();
-    if (fmt == 'pcm16') {
-      final sr = pcmSampleRate ?? _pcmPlaybackSampleRate;
-      final wav = _wrapPcm16ToWav(
-        audioBytes,
-        sampleRate: sr,
-        numChannels: _pcmChannels,
-      );
-      await _playWavBytes(wav);
-      return;
-    }
-
-    await _playMp3Bytes(audioBytes);
-  }
-
-  Future<void> _playMp3Bytes(Uint8List mp3) async {
-    await _resetOpenAiPlaybackSource(stopPlayer: true);
-    final file = File(
-      '${Directory.systemTemp.path}/roaddogg_reply_${DateTime.now().millisecondsSinceEpoch}.mp3',
-    );
-    await file.writeAsBytes(mp3, flush: true);
-    await _player.setFilePath(file.path);
-    await _player.play();
-  }
-
-  Future<void> _playWavBytes(Uint8List wav) async {
-    await _resetOpenAiPlaybackSource(stopPlayer: true);
-    final file = File(
-      '${Directory.systemTemp.path}/roaddogg_reply_${DateTime.now().millisecondsSinceEpoch}.wav',
-    );
-    await file.writeAsBytes(wav, flush: true);
-    await _player.setFilePath(file.path);
-    await _player.play();
-  }
-
-  Uint8List _wrapPcm16ToWav(
-    Uint8List pcm16, {
-    required int sampleRate,
-    required int numChannels,
-  }) {
-    const bitsPerSample = 16;
-    final byteRate = sampleRate * numChannels * (bitsPerSample ~/ 8);
-    final blockAlign = numChannels * (bitsPerSample ~/ 8);
-    final dataSize = pcm16.length;
-    final fileSizeMinus8 = 36 + dataSize;
-
-    final header = BytesBuilder();
-    void writeAscii(String s) => header.add(s.codeUnits);
-    void writeU32(int v) {
-      header.add([
-        v & 0xFF,
-        (v >> 8) & 0xFF,
-        (v >> 16) & 0xFF,
-        (v >> 24) & 0xFF,
-      ]);
-    }
-
-    void writeU16(int v) {
-      header.add([
-        v & 0xFF,
-        (v >> 8) & 0xFF,
-      ]);
-    }
-
-    writeAscii('RIFF');
-    writeU32(fileSizeMinus8);
-    writeAscii('WAVE');
-    writeAscii('fmt ');
-    writeU32(16);
-    writeU16(1);
-    writeU16(numChannels);
-    writeU32(sampleRate);
-    writeU32(byteRate);
-    writeU16(blockAlign);
-    writeU16(bitsPerSample);
-    writeAscii('data');
-    writeU32(dataSize);
-
-    final out = BytesBuilder();
-    out.add(header.takeBytes());
-    out.add(pcm16);
-    return out.takeBytes();
   }
 
   void _addMsg(String m) {

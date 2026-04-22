@@ -1,9 +1,7 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AppSettings extends ChangeNotifier {
-  static const _kBackendBaseUrl = 'backendBaseUrl';
   static const _kSpeakReplies = 'speakReplies';
   static const _kTtsEnabled = 'ttsEnabled';
   static const _kHoldToTalk = 'holdToTalk';
@@ -39,30 +37,11 @@ class AppSettings extends ChangeNotifier {
 
   final SharedPreferences _prefs;
 
-  static String get _defaultBackend {
-    final fromEnv = dotenv.env['BACKEND_BASE_URL']?.trim();
-    if (fromEnv != null && fromEnv.isNotEmpty) return fromEnv;
-    return const String.fromEnvironment(
-      'BACKEND_BASE_URL',
-      defaultValue: 'http://127.0.0.1:8787',
-    );
-  }
-
   static const String _defaultVoice = 'alloy';
 
   static Future<AppSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
     return AppSettings._(prefs);
-  }
-
-  String get backendBaseUrl =>
-      _prefs.getString(_kBackendBaseUrl) ?? _defaultBackend;
-
-  set backendBaseUrl(String value) {
-    final v = value.trim();
-    if (v.isEmpty) return;
-    _prefs.setString(_kBackendBaseUrl, v);
-    notifyListeners();
   }
 
   bool get speakReplies => _prefs.getBool(_kSpeakReplies) ?? true;

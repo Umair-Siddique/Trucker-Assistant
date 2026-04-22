@@ -12,7 +12,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   static const allowedVoices = <String>['alloy', 'nova', 'verse', 'coral'];
 
-  late final TextEditingController _backendCtrl;
   late final TextEditingController _nameCtrl;
   late final TextEditingController _emailCtrl;
   late final TextEditingController _phoneCtrl;
@@ -24,7 +23,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
 
     final s = widget.settings;
-    _backendCtrl = TextEditingController(text: s.backendBaseUrl);
     _nameCtrl = TextEditingController(text: s.driverName);
     _emailCtrl = TextEditingController(text: s.driverEmail);
     _phoneCtrl = TextEditingController(text: s.driverPhone);
@@ -38,7 +36,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
-    _backendCtrl.dispose();
     _nameCtrl.dispose();
     _emailCtrl.dispose();
     _phoneCtrl.dispose();
@@ -51,11 +48,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text)),
     );
-  }
-
-  void _saveBackendUrl() {
-    widget.settings.backendBaseUrl = _backendCtrl.text.trim();
-    _showSaved('Backend URL saved');
   }
 
   void _saveAccount() {
@@ -493,52 +485,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          TextField(
-                            controller: _backendCtrl,
-                            keyboardType: TextInputType.url,
-                            style: TextStyle(color: textColor),
-                            decoration: InputDecoration(
-                              labelText: 'Backend Base URL',
-                              labelStyle: TextStyle(color: subtextColor),
-                              hintText: 'http://127.0.0.1:8787',
-                              hintStyle: TextStyle(color: subtextColor),
-                              filled: true,
-                              fillColor: softBg,
-                              prefixIcon:
-                                  Icon(Icons.link, color: subtextColor),
-                              border: OutlineInputBorder(
+                          Material(
+                            color: softBg,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
+                                border: Border.all(color: borderColor),
                               ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(color: borderColor),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.cloud_off, color: subtextColor),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      'Backend removed — app runs fully in Flutter.',
+                                      style: TextStyle(
+                                        color: textColor,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide:
-                                    const BorderSide(color: Colors.black),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.black,
-                                foregroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              onPressed: () {
-                                _saveBackendUrl();
-                                modalSetState(() {});
-                              },
-                              child: const Text('Save Backend URL'),
                             ),
                           ),
                           const SizedBox(height: 14),

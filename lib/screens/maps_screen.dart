@@ -6,7 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../services/app_settings.dart';
-import '../services/realtime_voice.dart';
+import '../services/google_places_routes_client.dart';
 
 class MapsScreen extends StatefulWidget {
   const MapsScreen({
@@ -27,7 +27,7 @@ class MapsScreenState extends State<MapsScreen>
       Completer<GoogleMapController>();
 
   GoogleMapController? _controller;
-  late RealtimeVoiceClient _client;
+  late final GooglePlacesRoutesClient _client;
 
   bool _loadingLocation = true;
   bool _locationAllowed = false;
@@ -70,23 +70,18 @@ class MapsScreenState extends State<MapsScreen>
   @override
   void initState() {
     super.initState();
-    _client = RealtimeVoiceClient(baseUrl: widget.settings.backendBaseUrl);
+    _client = GooglePlacesRoutesClient();
     _initLocation();
   }
 
   @override
   void didUpdateWidget(covariant MapsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.settings.backendBaseUrl != widget.settings.backendBaseUrl) {
-      _client.dispose();
-      _client = RealtimeVoiceClient(baseUrl: widget.settings.backendBaseUrl);
-    }
   }
 
   @override
   void dispose() {
     _searchCtrl.dispose();
-    _client.dispose();
     super.dispose();
   }
 
@@ -101,6 +96,39 @@ class MapsScreenState extends State<MapsScreen>
 
   Future<void> runAssistantNearby(String category) async {
     await _runNearbySearch(category);
+  }
+
+  /// Voice action: start navigation to a destination.
+  /// - If [destinationQuery] is empty and a place is already selected, start the route.
+  /// - Otherwise search for the query, pick the first result, compute the route, then start.
+  Future<void> runAssistantNavigate(String destinationQuery) async {
+    final q = destinationQuery.trim();
+    if (q.isEmpty) {
+      if (_selectedPlace != null) {
+        _startRoute();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pick a destination first.')),
+        );
+      }
+      return;
+    }
+
+    _searchCtrl.text = q;
+    await _runTextSearch(q);
+
+    if (!mounted) return;
+    if (_results.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No results for $q')),
+      );
+      return;
+    }
+
+    final first = _results.first;
+    await _selectPlace(first);
+    if (!mounted) return;
+    _startRoute();
   }
 
   Future<void> _initLocation() async {
@@ -270,14 +298,14 @@ class MapsScreenState extends State<MapsScreen>
     });
 
     try {
-      final resp = await _client.searchPlacesText(
+      final places = await _client.searchText(
         query: query,
         latitude: _currentCenter.latitude,
         longitude: _currentCenter.longitude,
         maxResults: 8,
       );
 
-      _applyPlaces(resp.places, label: query);
+      _applyPlaces(places, label: query);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -297,14 +325,14 @@ class MapsScreenState extends State<MapsScreen>
     });
 
     try {
-      final resp = await _client.searchPlacesNearby(
+      final places = await _client.searchNearby(
         category: category,
         latitude: _currentCenter.latitude,
         longitude: _currentCenter.longitude,
         maxResults: 8,
       );
 
-      _applyPlaces(resp.places, label: category);
+      _applyPlaces(places, label: category);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -778,14 +806,36 @@ class MapsScreenState extends State<MapsScreen>
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(color: borderColor),
                         ),
-                        child: Text(
-                          _error!,
-                          style: TextStyle(
-                            color: isDark
-                                ? Colors.red.shade300
-                                : Colors.red.shade700,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () {
+                            showDialog<void>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Maps error'),
+                                content: SingleChildScrollView(
+                                  child: SelectableText(_error!),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(ctx).pop(),
+                                    child: const Text('Close'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          child: Text(
+                            _error!,
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: isDark
+                                  ? Colors.red.shade300
+                                  : Colors.red.shade700,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),

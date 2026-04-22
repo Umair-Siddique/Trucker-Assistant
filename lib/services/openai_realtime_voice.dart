@@ -9,6 +9,7 @@ import 'package:record/record.dart';
 
 import 'logs_command_bus.dart' as logsbus;
 import 'map_command_bus.dart' as mapbus;
+import 'map_navigation_command_bus.dart' as mapnavbus;
 import 'settings_command_bus.dart' as settingsbus;
 import 'weather_command_bus.dart' as weatherbus;
 
@@ -359,6 +360,31 @@ class OpenaiRealtimeVoiceController {
           mapbus.MapCommandBus.instance.search(q);
         }
         return {'ok': true, 'query': q};
+      },
+    );
+
+    await client.addTool(
+      const ToolDefinition(
+        name: 'start_map_navigation',
+        description:
+            'Start in-app navigation to a destination. Use this when the user says "start navigation", '
+            '"take me to", "navigate to", "start destination", or similar. If a destination is provided, '
+            'the app will search it on the map, pick the best match, compute a route, and start.',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'destination': {
+              'type': 'string',
+              'description':
+                  'Destination name/address. Optional if a destination is already selected in Maps.',
+            },
+          },
+        },
+      ),
+      (Map<String, dynamic> params) async {
+        final dest = (params['destination'] ?? '').toString().trim();
+        mapnavbus.MapNavigationCommandBus.instance.navigate(dest);
+        return {'ok': true, 'destination': dest};
       },
     );
 

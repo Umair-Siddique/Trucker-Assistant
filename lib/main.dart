@@ -13,6 +13,7 @@ import 'screens/lock_screen.dart';
 import 'services/app_settings.dart';
 import 'services/logs_command_bus.dart' as logsbus;
 import 'services/map_command_bus.dart' as mapbus;
+import 'services/map_navigation_command_bus.dart' as mapnavbus;
 import 'services/settings_command_bus.dart' as settingsbus;
 import 'services/weather_command_bus.dart' as weatherbus;
 
@@ -87,6 +88,7 @@ class _HomeShellState extends State<HomeShell> {
   int index = 2;
 
   StreamSubscription<dynamic>? _mapCommandSub;
+  StreamSubscription<mapnavbus.MapNavigateCommand>? _mapNavSub;
   StreamSubscription<weatherbus.WeatherCommand>? _weatherCommandSub;
   StreamSubscription<void>? _settingsCommandSub;
   StreamSubscription<void>? _logsCommandSub;
@@ -147,6 +149,24 @@ class _HomeShellState extends State<HomeShell> {
       });
     });
 
+    _mapNavSub =
+        mapnavbus.MapNavigationCommandBus.instance.stream.listen((command) {
+      if (!mounted) return;
+
+      setState(() {
+        _loadedTabs.add(1);
+        index = 1;
+      });
+
+      Future.delayed(const Duration(milliseconds: 180), () async {
+        if (!mounted) return;
+
+        await _mapsKey.currentState?.onTabVisible();
+        await _mapsKey.currentState
+            ?.runAssistantNavigate(command.destinationQuery);
+      });
+    });
+
     _weatherCommandSub =
         weatherbus.WeatherCommandBus.instance.stream.listen((command) {
       if (!mounted) return;
@@ -202,6 +222,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void dispose() {
     _mapCommandSub?.cancel();
+    _mapNavSub?.cancel();
     _weatherCommandSub?.cancel();
     _settingsCommandSub?.cancel();
     _logsCommandSub?.cancel();
