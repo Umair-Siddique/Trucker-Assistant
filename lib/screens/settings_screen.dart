@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/app_settings.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -9,7 +10,8 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen>
+    with SingleTickerProviderStateMixin {
   static const allowedVoices = <String>['alloy', 'nova', 'verse', 'coral'];
 
   late final TextEditingController _nameCtrl;
@@ -18,9 +20,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _companyCtrl;
   late final TextEditingController _truckCtrl;
 
+  late final AnimationController _enterCtrl;
+
   @override
   void initState() {
     super.initState();
+
+    _enterCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 520),
+    )..forward();
 
     final s = widget.settings;
     _nameCtrl = TextEditingController(text: s.driverName);
@@ -41,6 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _phoneCtrl.dispose();
     _companyCtrl.dispose();
     _truckCtrl.dispose();
+    _enterCtrl.dispose();
     super.dispose();
   }
 
@@ -459,15 +469,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             return StatefulBuilder(
               builder: (context, modalSetState) {
                 return SafeArea(
-                  top: false,
-                  child: SingleChildScrollView(
+                  top: true,
+                  child: SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.86,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _SheetHandle(isDark: isDark),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 18),
                           Text(
                             'App Preferences',
                             style: TextStyle(
@@ -485,114 +496,102 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          Material(
-                            color: softBg,
-                            borderRadius: BorderRadius.circular(16),
-                            child: Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: borderColor),
+                          Expanded(
+                            child: ListView(
+                              padding: EdgeInsets.only(
+                                bottom: 18 + MediaQuery.of(context).padding.bottom,
                               ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.cloud_off, color: subtextColor),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
+                              children: [
+                                _SheetCardInfo(
+                                  isDark: isDark,
+                                  icon: Icons.cloud_off,
+                                  text:
                                       'Backend removed — app runs fully in Flutter.',
-                                      style: TextStyle(
-                                        color: textColor,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
+                                ),
+                                const SizedBox(height: 14),
+                                _SheetSwitchTile(
+                                  icon: Icons.notifications_none,
+                                  title: 'Notifications',
+                                  subtitle: 'Trip reminders, alerts, and updates',
+                                  value: s.notificationsEnabled,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.notificationsEnabled = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.location_on_outlined,
+                                  title: 'Location Permission',
+                                  subtitle:
+                                      'Allow maps and weather to use your location',
+                                  value: s.locationEnabled,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.locationEnabled = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.dark_mode_outlined,
+                                  title: 'Dark Mode',
+                                  subtitle: 'Use a darker app appearance',
+                                  value: s.darkMode,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.darkMode = v;
+                                    modalSetState(() {});
+                                    Navigator.of(context).pop();
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.lock_outline,
+                                  title: 'Privacy Mode',
+                                  subtitle:
+                                      'Reduce app data visibility where possible',
+                                  value: s.privacyMode,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.privacyMode = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  'Units',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    color: textColor,
                                   ),
-                                ],
-                              ),
+                                ),
+                                const SizedBox(height: 12),
+                                _SheetSegmentChoiceCard(
+                                  title: 'Temperature',
+                                  values: const ['Fahrenheit', 'Celsius'],
+                                  selected: s.temperatureUnit,
+                                  isDark: isDark,
+                                  onSelected: (value) {
+                                    s.temperatureUnit = value;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSegmentChoiceCard(
+                                  title: 'Distance',
+                                  values: const ['Miles', 'Kilometers'],
+                                  selected: s.distanceUnit,
+                                  isDark: isDark,
+                                  onSelected: (value) {
+                                    s.distanceUnit = value;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 14),
-                          _ToggleRow(
-                            icon: Icons.notifications_none,
-                            title: 'Notifications',
-                            subtitle: 'Trip reminders, alerts, and updates',
-                            value: s.notificationsEnabled,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.notificationsEnabled = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.location_on_outlined,
-                            title: 'Location Permission',
-                            subtitle:
-                                'Allow maps and weather to use your location',
-                            value: s.locationEnabled,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.locationEnabled = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.dark_mode_outlined,
-                            title: 'Dark Mode',
-                            subtitle: 'Use a darker app appearance',
-                            value: s.darkMode,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.darkMode = v;
-                              modalSetState(() {});
-                              Navigator.of(context).pop();
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.lock_outline,
-                            title: 'Privacy Mode',
-                            subtitle:
-                                'Reduce app data visibility where possible',
-                            value: s.privacyMode,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.privacyMode = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 14),
-                          Text(
-                            'Units',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: textColor,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          _SegmentChoiceRow(
-                            title: 'Temperature',
-                            values: const ['Fahrenheit', 'Celsius'],
-                            selected: s.temperatureUnit,
-                            isDark: isDark,
-                            onSelected: (value) {
-                              s.temperatureUnit = value;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _SegmentChoiceRow(
-                            title: 'Distance',
-                            values: const ['Miles', 'Kilometers'],
-                            selected: s.distanceUnit,
-                            isDark: isDark,
-                            onSelected: (value) {
-                              s.distanceUnit = value;
-                              modalSetState(() {});
-                            },
                           ),
                         ],
                       ),
@@ -624,15 +623,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             return StatefulBuilder(
               builder: (context, modalSetState) {
                 return SafeArea(
-                  top: false,
-                  child: SingleChildScrollView(
+                  top: true,
+                  child: SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.86,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _SheetHandle(isDark: isDark),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 18),
                           Text(
                             'Driving Preferences',
                             style: TextStyle(
@@ -650,99 +650,110 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          _ToggleRow(
-                            icon: Icons.local_shipping_outlined,
-                            title: 'Truck Route Mode',
-                            subtitle: 'Prefer truck-safe roads and routes',
-                            value: s.truckRouteMode,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.truckRouteMode = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.receipt_long_outlined,
-                            title: 'Avoid Tolls',
-                            subtitle:
-                                'Try to avoid toll roads when possible',
-                            value: s.avoidTolls,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.avoidTolls = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.route_outlined,
-                            title: 'Avoid Highways',
-                            subtitle:
-                                'Prefer alternate roads where possible',
-                            value: s.avoidHighways,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.avoidHighways = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.warning_amber_outlined,
-                            title: 'Hazmat Mode',
-                            subtitle:
-                                'Apply hazardous material routing later',
-                            value: s.hazmatMode,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.hazmatMode = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _ToggleRow(
-                            icon: Icons.night_shelter_outlined,
-                            title: 'Rest Stop Alerts',
-                            subtitle:
-                                'Show nearby rest stops and parking alerts',
-                            value: s.restStopAlerts,
-                            isDark: isDark,
-                            onChanged: (v) {
-                              s.restStopAlerts = v;
-                              modalSetState(() {});
-                            },
-                          ),
-                          const SizedBox(height: 14),
-                          Text(
-                            'Vehicle Profile',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: textColor,
+                          Expanded(
+                            child: ListView(
+                              padding: EdgeInsets.only(
+                                bottom: 18 + MediaQuery.of(context).padding.bottom,
+                              ),
+                              children: [
+                                _SheetSwitchTile(
+                                  icon: Icons.local_shipping_outlined,
+                                  title: 'Truck Route Mode',
+                                  subtitle: 'Prefer truck-safe roads and routes',
+                                  value: s.truckRouteMode,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.truckRouteMode = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.receipt_long_outlined,
+                                  title: 'Avoid Tolls',
+                                  subtitle:
+                                      'Try to avoid toll roads when possible',
+                                  value: s.avoidTolls,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.avoidTolls = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.route_outlined,
+                                  title: 'Avoid Highways',
+                                  subtitle:
+                                      'Prefer alternate roads where possible',
+                                  value: s.avoidHighways,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.avoidHighways = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.warning_amber_outlined,
+                                  title: 'Hazmat Mode',
+                                  subtitle:
+                                      'Apply hazardous material routing later',
+                                  value: s.hazmatMode,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.hazmatMode = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetSwitchTile(
+                                  icon: Icons.night_shelter_outlined,
+                                  title: 'Rest Stop Alerts',
+                                  subtitle:
+                                      'Show nearby rest stops and parking alerts',
+                                  value: s.restStopAlerts,
+                                  isDark: isDark,
+                                  onChanged: (v) {
+                                    s.restStopAlerts = v;
+                                    modalSetState(() {});
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  'Vehicle Profile',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                    color: textColor,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                _SheetValueTile(
+                                  title: 'Height',
+                                  value: s.vehicleHeight,
+                                  isDark: isDark,
+                                  onTap: () =>
+                                      _showSaved('Height editor coming soon'),
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetValueTile(
+                                  title: 'Weight',
+                                  value: s.vehicleWeight,
+                                  isDark: isDark,
+                                  onTap: () =>
+                                      _showSaved('Weight editor coming soon'),
+                                ),
+                                const SizedBox(height: 10),
+                                _SheetValueTile(
+                                  title: 'Trailer Type',
+                                  value: s.trailerType,
+                                  isDark: isDark,
+                                  onTap: () =>
+                                      _showSaved('Trailer editor coming soon'),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 12),
-                          _SimpleValueTile(
-                            title: 'Height',
-                            value: s.vehicleHeight,
-                            isDark: isDark,
-                            onTap: () => _showSaved('Height editor coming soon'),
-                          ),
-                          const SizedBox(height: 10),
-                          _SimpleValueTile(
-                            title: 'Weight',
-                            value: s.vehicleWeight,
-                            isDark: isDark,
-                            onTap: () => _showSaved('Weight editor coming soon'),
-                          ),
-                          const SizedBox(height: 10),
-                          _SimpleValueTile(
-                            title: 'Trailer Type',
-                            value: s.trailerType,
-                            isDark: isDark,
-                            onTap: () =>
-                                _showSaved('Trailer editor coming soon'),
                           ),
                         ],
                       ),
@@ -770,61 +781,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtextColor) {
             return SafeArea(
               top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _SheetHandle(isDark: isDark),
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Legal & Support',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          color: textColor,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    10,
+                    16,
+                    24 + MediaQuery.of(context).padding.bottom,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _SheetHandle(isDark: isDark),
+                      const SizedBox(height: 16),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Legal & Support',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: textColor,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    _SheetInfoTile(
-                      icon: Icons.description_outlined,
-                      title: 'Terms of Use',
-                      subtitle: 'Rules for using RoadDogg AI Assist',
-                      isDark: isDark,
-                    ),
-                    const SizedBox(height: 10),
-                    _SheetInfoTile(
-                      icon: Icons.privacy_tip_outlined,
-                      title: 'Privacy Policy',
-                      subtitle:
-                          'How location, voice, and app data are handled',
-                      isDark: isDark,
-                    ),
-                    const SizedBox(height: 10),
-                    _SheetInfoTile(
-                      icon: Icons.support_agent_outlined,
-                      title: 'Support',
-                      subtitle: 'Contact support@roaddogg.local',
-                      isDark: isDark,
-                    ),
-                    const SizedBox(height: 10),
-                    _SheetInfoTile(
-                      icon: Icons.bug_report_outlined,
-                      title: 'Report a Bug',
-                      subtitle: 'Send bug details and screenshots later',
-                      isDark: isDark,
-                    ),
-                    const SizedBox(height: 10),
-                    _SheetInfoTile(
-                      icon: Icons.info_outline,
-                      title: 'App Version',
-                      subtitle: 'RoadDogg AI Assist v1.0.0',
-                      isDark: isDark,
-                    ),
-                  ],
+                      const SizedBox(height: 14),
+                      _SheetInfoTile(
+                        icon: Icons.description_outlined,
+                        title: 'Terms of Use',
+                        subtitle: 'Rules for using RoadDogg AI Assist',
+                        isDark: isDark,
+                      ),
+                      const SizedBox(height: 10),
+                      _SheetInfoTile(
+                        icon: Icons.privacy_tip_outlined,
+                        title: 'Privacy Policy',
+                        subtitle:
+                            'How location, voice, and app data are handled',
+                        isDark: isDark,
+                      ),
+                      const SizedBox(height: 10),
+                      _SheetInfoTile(
+                        icon: Icons.support_agent_outlined,
+                        title: 'Support',
+                        subtitle: 'Contact support@roaddogg.local',
+                        isDark: isDark,
+                      ),
+                      const SizedBox(height: 10),
+                      _SheetInfoTile(
+                        icon: Icons.bug_report_outlined,
+                        title: 'Report a Bug',
+                        subtitle: 'Send bug details and screenshots later',
+                        isDark: isDark,
+                      ),
+                      const SizedBox(height: 10),
+                      _SheetInfoTile(
+                        icon: Icons.info_outline,
+                        title: 'App Version',
+                        subtitle: 'RoadDogg AI Assist v1.0.0',
+                        isDark: isDark,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -835,8 +853,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Color _sheetBg(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return isDark ? const Color(0xFF181818) : Colors.white;
+    // Match the app-wide surface used by Settings screen.
+    return Theme.of(context).scaffoldBackgroundColor;
   }
 
   @override
@@ -852,109 +870,301 @@ class _SettingsScreenState extends State<SettingsScreen> {
         final borderColor =
             isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
         final textColor = isDark ? Colors.white : Colors.black87;
+        final subtextColor = isDark ? Colors.white70 : Colors.black54;
 
         return Scaffold(
           backgroundColor: screenBg,
+          appBar: AppBar(
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            backgroundColor: screenBg,
+            surfaceTintColor: Colors.transparent,
+            systemOverlayStyle: isDark
+                ? SystemUiOverlayStyle.light
+                : SystemUiOverlayStyle.dark,
+            title: const Text(
+              'Settings',
+              style: TextStyle(fontWeight: FontWeight.w900),
+            ),
+            actions: [
+              Padding(
+                padding: const EdgeInsets.only(right: 10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: _showAccountSheet,
+                  child: Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: borderColor),
+                      boxShadow: isDark
+                          ? const []
+                          : const [
+                              BoxShadow(
+                                blurRadius: 10,
+                                offset: Offset(0, 4),
+                                color: Color(0x14000000),
+                              ),
+                            ],
+                    ),
+                    child: Icon(Icons.person_outline, color: textColor),
+                  ),
+                ),
+              ),
+            ],
+          ),
           body: SafeArea(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-              children: [
-                SizedBox(
-                  height: 52,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Center(
-                        child: Text(
-                          'Settings',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            color: textColor,
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Customize your experience',
+                    style: TextStyle(
+                      color: subtextColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _QuickStatusCard(
+                    isDark: isDark,
+                    title: _nameCtrl.text.trim().isEmpty
+                        ? 'Driver Profile'
+                        : _nameCtrl.text.trim(),
+                    subtitle: s.signedIn
+                        ? 'Signed in • Ready to go'
+                        : 'Guest mode • Sign in for full features',
+                    badge: s.signedIn ? 'Live' : 'Guest',
+                    onTap: _showAccountSheet,
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.only(bottom: 20),
+                      children: [
+                        _EnterAnim(
+                          controller: _enterCtrl,
+                          index: 0,
+                          child: _MainSettingsTile(
+                            icon: Icons.person_outline,
+                            title: 'Account',
+                            subtitle:
+                                'Profile, sign in, truck, and company details',
+                            trailingText: s.signedIn ? 'Live' : 'Guest',
+                            isDark: isDark,
+                            onTap: _showAccountSheet,
                           ),
                         ),
-                      ),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(999),
-                          onTap: _showAccountSheet,
-                          child: Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: cardBg,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: borderColor),
-                              boxShadow: isDark
-                                  ? const []
-                                  : const [
-                                      BoxShadow(
-                                        blurRadius: 8,
-                                        offset: Offset(0, 2),
-                                        color: Color(0x12000000),
-                                      ),
-                                    ],
-                            ),
-                            child: Icon(
-                              Icons.person_outline,
-                              color: textColor,
-                            ),
+                        const SizedBox(height: 12),
+                        _EnterAnim(
+                          controller: _enterCtrl,
+                          index: 1,
+                          child: _MainSettingsTile(
+                            icon: Icons.smart_toy_outlined,
+                            title: 'Assistant & Voice',
+                            subtitle:
+                                'Voice replies, hold to talk, and assistant voice',
+                            trailingText:
+                                s.voice[0].toUpperCase() + s.voice.substring(1),
+                            isDark: isDark,
+                            onTap: _showAssistantVoiceSheet,
                           ),
+                        ),
+                        const SizedBox(height: 12),
+                        _EnterAnim(
+                          controller: _enterCtrl,
+                          index: 2,
+                          child: _MainSettingsTile(
+                            icon: Icons.tune,
+                            title: 'App Preferences',
+                            subtitle:
+                                'Backend, notifications, permissions, units, and privacy',
+                            isDark: isDark,
+                            onTap: _showAppPreferencesSheet,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _EnterAnim(
+                          controller: _enterCtrl,
+                          index: 3,
+                          child: _MainSettingsTile(
+                            icon: Icons.local_shipping_outlined,
+                            title: 'Driving Preferences',
+                            subtitle:
+                                'Truck mode, tolls, hazmat, trailer, and routing',
+                            isDark: isDark,
+                            onTap: _showDrivingPreferencesSheet,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        _EnterAnim(
+                          controller: _enterCtrl,
+                          index: 4,
+                          child: _MainSettingsTile(
+                            icon: Icons.description_outlined,
+                            title: 'Legal & Support',
+                            subtitle:
+                                'Privacy policy, terms, support, bugs, and app info',
+                            isDark: isDark,
+                            onTap: _showLegalSupportSheet,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _QuickStatusCard extends StatelessWidget {
+  const _QuickStatusCard({
+    required this.isDark,
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+    required this.onTap,
+  });
+
+  final bool isDark;
+  final String title;
+  final String subtitle;
+  final String badge;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardBg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    final borderColor =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
+
+    return Material(
+      color: cardBg,
+      elevation: isDark ? 0 : 3,
+      shadowColor: const Color(0x14000000),
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+            child: Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.shield_outlined, color: Colors.white),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: subtextColor,
+                          height: 1.25,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
-                _MainSettingsTile(
-                  icon: Icons.person_outline,
-                  title: 'Account',
-                  subtitle: 'Profile, sign in, truck, and company details',
-                  trailingText: s.signedIn ? 'Live' : 'Guest',
-                  isDark: isDark,
-                  onTap: _showAccountSheet,
+                const SizedBox(width: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badge,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                _MainSettingsTile(
-                  icon: Icons.smart_toy_outlined,
-                  title: 'Assistant & Voice',
-                  subtitle: 'Voice replies, hold to talk, and assistant voice',
-                  trailingText:
-                      s.voice[0].toUpperCase() + s.voice.substring(1),
-                  isDark: isDark,
-                  onTap: _showAssistantVoiceSheet,
-                ),
-                const SizedBox(height: 12),
-                _MainSettingsTile(
-                  icon: Icons.tune,
-                  title: 'App Preferences',
-                  subtitle:
-                      'Backend, notifications, permissions, units, and privacy',
-                  isDark: isDark,
-                  onTap: _showAppPreferencesSheet,
-                ),
-                const SizedBox(height: 12),
-                _MainSettingsTile(
-                  icon: Icons.local_shipping_outlined,
-                  title: 'Driving Preferences',
-                  subtitle: 'Truck mode, tolls, hazmat, trailer, and routing',
-                  isDark: isDark,
-                  onTap: _showDrivingPreferencesSheet,
-                ),
-                const SizedBox(height: 12),
-                _MainSettingsTile(
-                  icon: Icons.description_outlined,
-                  title: 'Legal & Support',
-                  subtitle: 'Privacy policy, terms, support, bugs, and app info',
-                  isDark: isDark,
-                  onTap: _showLegalSupportSheet,
+                const SizedBox(width: 6),
+                Icon(
+                  Icons.chevron_right,
+                  color: isDark ? Colors.white38 : Colors.black38,
                 ),
               ],
             ),
           ),
-        );
-      },
+        ),
+      ),
+    );
+  }
+}
+
+class _EnterAnim extends StatelessWidget {
+  const _EnterAnim({
+    required this.controller,
+    required this.index,
+    required this.child,
+  });
+
+  final AnimationController controller;
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final begin = (index * 0.08).clamp(0.0, 0.6);
+    final end = (begin + 0.45).clamp(0.0, 1.0);
+
+    final anim = CurvedAnimation(
+      parent: controller,
+      curve: Interval(begin, end, curve: Curves.easeOutCubic),
+    );
+
+    return FadeTransition(
+      opacity: anim,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.08),
+          end: Offset.zero,
+        ).animate(anim),
+        child: child,
+      ),
     );
   }
 }
@@ -1214,149 +1424,7 @@ class _ToggleRow extends StatelessWidget {
   }
 }
 
-class _SegmentChoiceRow extends StatelessWidget {
-  const _SegmentChoiceRow({
-    required this.title,
-    required this.values,
-    required this.selected,
-    required this.onSelected,
-    required this.isDark,
-  });
-
-  final String title;
-  final List<String> values;
-  final String selected;
-  final ValueChanged<String> onSelected;
-  final bool isDark;
-
-  @override
-  Widget build(BuildContext context) {
-    final softBg = isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
-    final textColor = isDark ? Colors.white : Colors.black87;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: softBg,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 14,
-              color: textColor,
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: values.map((value) {
-              final isSelected = selected == value;
-              return GestureDetector(
-                onTap: () => onSelected(value),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? Colors.black
-                        : (isDark ? const Color(0xFF1A1A1A) : Colors.white),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: isSelected
-                          ? Colors.black
-                          : (isDark
-                              ? const Color(0xFF343434)
-                              : Colors.black12),
-                    ),
-                  ),
-                  child: Text(
-                    value,
-                    style: TextStyle(
-                      color: isSelected ? Colors.white : textColor,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SimpleValueTile extends StatelessWidget {
-  const _SimpleValueTile({
-    required this.title,
-    required this.value,
-    required this.onTap,
-    required this.isDark,
-  });
-
-  final String title;
-  final String value;
-  final VoidCallback onTap;
-  final bool isDark;
-
-  @override
-  Widget build(BuildContext context) {
-    final softBg = isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white70 : Colors.black54;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Ink(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        decoration: BoxDecoration(
-          color: softBg,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  color: textColor,
-                ),
-              ),
-            ),
-            Text(
-              value,
-              style: TextStyle(
-                color: subtextColor,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(
-              Icons.chevron_right,
-              color: isDark ? Colors.white38 : Colors.black38,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// (removed unused legacy sheet tiles)
 
 class _ProfileField extends StatelessWidget {
   const _ProfileField({
@@ -1471,6 +1539,288 @@ class _SheetInfoTile extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetCardBase extends StatelessWidget {
+  const _SheetCardBase({
+    required this.isDark,
+    required this.child,
+    this.onTap,
+  });
+
+  final bool isDark;
+  final Widget child;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cardBg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    final borderColor =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
+
+    return Material(
+      color: cardBg,
+      elevation: isDark ? 0 : 2,
+      shadowColor: const Color(0x12000000),
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Ink(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetSwitchTile extends StatelessWidget {
+  const _SheetSwitchTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+    required this.isDark,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final softBg = isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
+
+    return _SheetCardBase(
+      isDark: isDark,
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: softBg,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: textColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 14,
+                    color: textColor,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: subtextColor,
+                    fontSize: 12,
+                    height: 1.25,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Switch(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetValueTile extends StatelessWidget {
+  const _SheetValueTile({
+    required this.title,
+    required this.value,
+    required this.onTap,
+    required this.isDark,
+  });
+
+  final String title;
+  final String value;
+  final VoidCallback onTap;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
+
+    return _SheetCardBase(
+      isDark: isDark,
+      onTap: onTap,
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: textColor,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: subtextColor,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(
+            Icons.chevron_right,
+            color: isDark ? Colors.white38 : Colors.black38,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetCardInfo extends StatelessWidget {
+  const _SheetCardInfo({
+    required this.isDark,
+    required this.icon,
+    required this.text,
+  });
+
+  final bool isDark;
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final softBg = isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
+
+    return _SheetCardBase(
+      isDark: isDark,
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: softBg,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: subtextColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: textColor,
+                fontWeight: FontWeight.w700,
+                height: 1.25,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetSegmentChoiceCard extends StatelessWidget {
+  const _SheetSegmentChoiceCard({
+    required this.title,
+    required this.values,
+    required this.selected,
+    required this.onSelected,
+    required this.isDark,
+  });
+
+  final String title;
+  final List<String> values;
+  final String selected;
+  final ValueChanged<String> onSelected;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
+
+    return _SheetCardBase(
+      isDark: isDark,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 14,
+              color: textColor,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: values.map((value) {
+              final isSelected = selected == value;
+              return GestureDetector(
+                onTap: () => onSelected(value),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? Colors.black
+                        : (isDark ? const Color(0xFF1A1A1A) : Colors.white),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isSelected
+                          ? Colors.black
+                          : (isDark
+                              ? const Color(0xFF343434)
+                              : Colors.black12),
+                    ),
+                  ),
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      color: isSelected ? Colors.white : subtextColor,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),

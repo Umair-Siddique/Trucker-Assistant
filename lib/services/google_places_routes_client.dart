@@ -191,7 +191,8 @@ class GooglePlacesRoutesClient {
     }
 
     final data = jsonDecode(text);
-    final raw = (data is Map) ? (data['places'] as List? ?? const []) : const [];
+    final raw =
+        (data is Map) ? (data['places'] as List? ?? const []) : const [];
     return raw
         .whereType<Map>()
         .map((e) => _normalizePlace(Map<String, dynamic>.from(e)))
@@ -249,7 +250,8 @@ class GooglePlacesRoutesClient {
     }
 
     final data = jsonDecode(text);
-    final raw = (data is Map) ? (data['places'] as List? ?? const []) : const [];
+    final raw =
+        (data is Map) ? (data['places'] as List? ?? const []) : const [];
     return raw
         .whereType<Map>()
         .map((e) => _normalizePlace(Map<String, dynamic>.from(e)))
@@ -261,6 +263,8 @@ class GooglePlacesRoutesClient {
     required double originLongitude,
     required double destinationLatitude,
     required double destinationLongitude,
+    bool avoidTolls = false,
+    bool avoidHighways = false,
   }) async {
     final key = _googleApiKey ?? _missingKey();
 
@@ -275,7 +279,10 @@ class GooglePlacesRoutesClient {
       body: jsonEncode({
         'origin': {
           'location': {
-            'latLng': {'latitude': originLatitude, 'longitude': originLongitude},
+            'latLng': {
+              'latitude': originLatitude,
+              'longitude': originLongitude
+            },
           },
         },
         'destination': {
@@ -292,6 +299,11 @@ class GooglePlacesRoutesClient {
         'languageCode': 'en-US',
         'units': 'IMPERIAL',
         'polylineQuality': 'HIGH_QUALITY',
+        if (avoidTolls || avoidHighways)
+          'routeModifiers': {
+            if (avoidTolls) 'avoidTolls': true,
+            if (avoidHighways) 'avoidHighways': true,
+          },
       }),
     );
 
@@ -307,7 +319,8 @@ class GooglePlacesRoutesClient {
     }
 
     final data = jsonDecode(text);
-    final routes = (data is Map) ? (data['routes'] as List? ?? const []) : const [];
+    final routes =
+        (data is Map) ? (data['routes'] as List? ?? const []) : const [];
     final route = routes.isNotEmpty && routes.first is Map
         ? Map<String, dynamic>.from(routes.first as Map)
         : null;
@@ -329,9 +342,10 @@ class GooglePlacesRoutesClient {
     final steps = rawSteps.whereType<Map>().map((raw) {
       final step = Map<String, dynamic>.from(raw);
       return RouteStepResult(
-        instruction: (((step['navigationInstruction'] as Map?)?['instructions']) ??
-                'Continue')
-            .toString(),
+        instruction:
+            (((step['navigationInstruction'] as Map?)?['instructions']) ??
+                    'Continue')
+                .toString(),
         distanceMeters: _toInt(step['distanceMeters']) ?? 0,
         durationSeconds: _parseDurationToSeconds(step['staticDuration']),
       );
@@ -345,4 +359,3 @@ class GooglePlacesRoutesClient {
     );
   }
 }
-

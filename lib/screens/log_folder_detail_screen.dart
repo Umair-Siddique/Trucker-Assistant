@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/log_store.dart';
 
@@ -8,17 +9,20 @@ class LogFolderDetailScreen extends StatefulWidget {
     required this.folderId,
     required this.folderTitle,
     required this.folderSubtitle,
+    this.heroTag,
   });
 
   final String folderId;
   final String folderTitle;
   final String folderSubtitle;
+  final String? heroTag;
 
   @override
   State<LogFolderDetailScreen> createState() => _LogFolderDetailScreenState();
 }
 
-class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
+class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _titleCtrl = TextEditingController();
   final TextEditingController _noteCtrl = TextEditingController();
 
@@ -26,9 +30,15 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
   bool _saving = false;
   List<LogEntry> _entries = [];
 
+  late final AnimationController _enterCtrl;
+
   @override
   void initState() {
     super.initState();
+    _enterCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
+    );
     _loadFolder();
   }
 
@@ -36,6 +46,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
   void dispose() {
     _titleCtrl.dispose();
     _noteCtrl.dispose();
+    _enterCtrl.dispose();
     super.dispose();
   }
 
@@ -47,6 +58,8 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
       _entries = entries;
       _loading = false;
     });
+
+    _enterCtrl.forward(from: 0);
   }
 
   Future<void> _addEntry() async {
@@ -85,13 +98,17 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
 
   void _showAddEntrySheet() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final surface = isDark ? const Color(0xFF181818) : Colors.white;
+    final bg = Theme.of(context).scaffoldBackgroundColor;
+    final softBg =
+        isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7);
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: surface,
+      backgroundColor: bg,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -106,12 +123,15 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 42,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.black26,
-                  borderRadius: BorderRadius.circular(99),
+              // Handle
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black26,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -121,19 +141,34 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
                   'Add ${widget.folderTitle} Entry',
                   style: TextStyle(
                     fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    color: isDark ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.w900,
+                    color: textColor,
                   ),
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  widget.folderSubtitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: subtextColor,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
               TextField(
                 controller: _titleCtrl,
+                style: TextStyle(
+                    color: textColor, fontWeight: FontWeight.w700),
                 decoration: InputDecoration(
                   labelText: 'Title',
+                  labelStyle: TextStyle(color: subtextColor),
+                  prefixIcon:
+                      Icon(Icons.title_rounded, color: subtextColor),
                   filled: true,
-                  fillColor:
-                      isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7),
+                  fillColor: softBg,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
                     borderSide: BorderSide.none,
@@ -141,6 +176,11 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
                   enabledBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
                     borderSide: BorderSide(color: border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide:
+                        const BorderSide(color: Colors.black, width: 1.5),
                   ),
                 ),
               ),
@@ -149,11 +189,17 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
                 controller: _noteCtrl,
                 minLines: 3,
                 maxLines: 5,
+                style: TextStyle(color: textColor),
                 decoration: InputDecoration(
                   labelText: 'Details',
+                  labelStyle: TextStyle(color: subtextColor),
+                  alignLabelWithHint: true,
+                  prefixIcon: Padding(
+                    padding: const EdgeInsets.only(bottom: 48),
+                    child: Icon(Icons.notes_rounded, color: subtextColor),
+                  ),
                   filled: true,
-                  fillColor:
-                      isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7),
+                  fillColor: softBg,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
                     borderSide: BorderSide.none,
@@ -162,19 +208,45 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
                     borderRadius: BorderRadius.circular(16),
                     borderSide: BorderSide(color: border),
                   ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide:
+                        const BorderSide(color: Colors.black, width: 1.5),
+                  ),
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Material(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: _saving ? null : _addEntry,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Center(
+                        child: _saving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text(
+                                'Save Entry',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
+                                ),
+                              ),
+                      ),
+                    ),
                   ),
-                  onPressed: _saving ? null : _addEntry,
-                  child: Text(_saving ? 'Saving...' : 'Save Entry'),
                 ),
               ),
             ],
@@ -188,12 +260,8 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
     final now = DateTime.now();
     final diff = now.difference(dt);
 
-    if (diff.inMinutes < 60) {
-      return '${diff.inMinutes} min ago';
-    }
-    if (diff.inHours < 24) {
-      return '${diff.inHours} hr ago';
-    }
+    if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
+    if (diff.inHours < 24) return '${diff.inHours} hr ago';
     return '${dt.month}/${dt.day}/${dt.year}';
   }
 
@@ -202,148 +270,341 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF4F4F4);
     final surface = isDark ? const Color(0xFF181818) : Colors.white;
+    final softBg =
+        isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7);
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
-    final titleColor = isDark ? Colors.white : Colors.black87;
-    final subtitleColor = isDark ? Colors.white70 : Colors.black54;
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white70 : Colors.black54;
 
     return Scaffold(
       backgroundColor: bg,
-      body: SafeArea(
-        child: Column(
+      appBar: AppBar(
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: bg,
+        surfaceTintColor: Colors.transparent,
+        systemOverlayStyle: isDark
+            ? SystemUiOverlayStyle.light
+            : SystemUiOverlayStyle.dark,
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          icon: Icon(Icons.arrow_back_ios_new_rounded,
+              color: textColor, size: 20),
+        ),
+        title: Row(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: Row(
+            Hero(
+              tag: widget.heroTag ?? 'folder_icon_${widget.folderId}',
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(Icons.folder_open_rounded,
+                    color: Colors.white, size: 18),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    icon: Icon(
-                      Icons.arrow_back,
-                      color: titleColor,
+                  Text(
+                    widget.folderTitle,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.folderTitle,
-                          style: TextStyle(
-                            color: titleColor,
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        Text(
-                          widget.folderSubtitle,
-                          style: TextStyle(
-                            color: subtitleColor,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
+                  Text(
+                    widget.folderSubtitle,
+                    style: TextStyle(
+                      color: subtextColor,
+                      fontSize: 11,
                     ),
-                  ),
-                  GestureDetector(
-                    onTap: _showAddEntrySheet,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: surface,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: border),
-                      ),
-                      child: Icon(Icons.add, color: titleColor),
-                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _entries.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No entries yet',
-                            style: TextStyle(
-                              color: subtitleColor,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-                          itemCount: _entries.length,
-                          itemBuilder: (_, i) {
-                            final entry = _entries[i];
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: Container(
-                                padding: const EdgeInsets.all(14),
+          ],
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Material(
+              color: surface,
+              borderRadius: BorderRadius.circular(13),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: _showAddEntrySheet,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: border),
+                  ),
+                  child: Icon(Icons.add_rounded,
+                      color: textColor, size: 20),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: _loading
+            ? Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(strokeWidth: 2),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Loading entries...',
+                      style: TextStyle(
+                        color: subtextColor,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            : _entries.isEmpty
+                ? _EmptyEntries(isDark: isDark)
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                    itemCount: _entries.length,
+                    itemBuilder: (_, i) {
+                      final entry = _entries[i];
+
+                      final start = (i * 0.07).clamp(0.0, 0.7);
+                      final end = (start + 0.4).clamp(0.0, 1.0);
+                      final anim = CurvedAnimation(
+                        parent: _enterCtrl,
+                        curve: Interval(start, end,
+                            curve: Curves.easeOutCubic),
+                      );
+
+                      return FadeTransition(
+                        opacity: anim,
+                        child: SlideTransition(
+                          position: Tween<Offset>(
+                            begin: const Offset(0, 0.05),
+                            end: Offset.zero,
+                          ).animate(anim),
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Dismissible(
+                              key: Key(entry.id),
+                              direction: DismissDirection.endToStart,
+                              background: Container(
+                                alignment: Alignment.centerRight,
+                                padding:
+                                    const EdgeInsets.only(right: 20),
                                 decoration: BoxDecoration(
-                                  color: surface,
-                                  borderRadius: BorderRadius.circular(18),
-                                  border: Border.all(color: border),
+                                  color: Colors.red.shade700,
+                                  borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            entry.title,
-                                            style: TextStyle(
-                                              color: titleColor,
-                                              fontWeight: FontWeight.w800,
-                                              fontSize: 16,
+                                child: const Icon(Icons.delete_outline_rounded,
+                                    color: Colors.white, size: 24),
+                              ),
+                              onDismissed: (_) => _deleteEntry(entry),
+                              child: Material(
+                                color: surface,
+                                elevation: isDark ? 0 : 2,
+                                shadowColor: const Color(0x10000000),
+                                borderRadius: BorderRadius.circular(20),
+                                clipBehavior: Clip.antiAlias,
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(color: border),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Container(
+                                            width: 36,
+                                            height: 36,
+                                            decoration: BoxDecoration(
+                                              color: softBg,
+                                              borderRadius:
+                                                  BorderRadius.circular(11),
+                                            ),
+                                            child: Icon(
+                                              Icons.description_outlined,
+                                              size: 18,
+                                              color: isDark
+                                                  ? Colors.white60
+                                                  : Colors.black45,
                                             ),
                                           ),
-                                        ),
-                                        PopupMenuButton<String>(
-                                          color: surface,
-                                          onSelected: (value) {
-                                            if (value == 'delete') {
-                                              _deleteEntry(entry);
-                                            }
-                                          },
-                                          itemBuilder: (_) => const [
-                                            PopupMenuItem(
-                                              value: 'delete',
-                                              child: Text('Delete'),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              entry.title,
+                                              style: TextStyle(
+                                                color: textColor,
+                                                fontWeight: FontWeight.w900,
+                                                fontSize: 15,
+                                              ),
                                             ),
-                                          ],
+                                          ),
+                                          PopupMenuButton<String>(
+                                            color: surface,
+                                            iconColor: subtextColor,
+                                            iconSize: 20,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
+                                            onSelected: (value) {
+                                              if (value == 'delete') {
+                                                _deleteEntry(entry);
+                                              }
+                                            },
+                                            itemBuilder: (_) => const [
+                                              PopupMenuItem(
+                                                value: 'delete',
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      Icons
+                                                          .delete_outline_rounded,
+                                                      size: 18,
+                                                      color: Colors.red,
+                                                    ),
+                                                    SizedBox(width: 8),
+                                                    Text(
+                                                      'Delete',
+                                                      style: TextStyle(
+                                                          color: Colors.red),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        entry.note,
+                                        style: TextStyle(
+                                          color: subtextColor,
+                                          height: 1.45,
+                                          fontSize: 13,
                                         ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      entry.note,
-                                      style: TextStyle(
-                                        color: subtitleColor,
-                                        height: 1.35,
                                       ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      _formatTime(entry.createdAt),
-                                      style: TextStyle(
-                                        color: subtitleColor,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
+                                      const SizedBox(height: 12),
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.schedule_rounded,
+                                            size: 13,
+                                            color: subtextColor,
+                                          ),
+                                          const SizedBox(width: 5),
+                                          Text(
+                                            _formatTime(entry.createdAt),
+                                            style: TextStyle(
+                                              color: subtextColor,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         ),
+                      );
+                    },
+                  ),
+      ),
+    );
+  }
+}
+
+class _EmptyEntries extends StatelessWidget {
+  const _EmptyEntries({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final surface = isDark ? const Color(0xFF181818) : Colors.white;
+    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white54 : Colors.black38;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Material(
+          color: surface,
+          borderRadius: BorderRadius.circular(24),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: border),
             ),
-          ],
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF222222)
+                        : const Color(0xFFF0F0F0),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.folder_open_outlined,
+                    size: 30,
+                    color: subtextColor,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No entries yet',
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 17,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tap + to add your first entry\nto this folder.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: subtextColor,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

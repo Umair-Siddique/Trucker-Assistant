@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter/services.dart';
 
 import 'screens/logs_screen.dart';
 import 'screens/maps_screen.dart';
@@ -41,6 +43,22 @@ class RoadDoggApp extends StatelessWidget {
           debugShowCheckedModeBanner: false,
           title: 'RoadDogg AI Assist',
           themeMode: settings.darkMode ? ThemeMode.dark : ThemeMode.light,
+          builder: (context, child) {
+            final theme = Theme.of(context);
+            final isDark = theme.brightness == Brightness.dark;
+            final bg = theme.scaffoldBackgroundColor;
+
+            return AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: bg,
+                statusBarIconBrightness:
+                    isDark ? Brightness.light : Brightness.dark,
+                statusBarBrightness:
+                    isDark ? Brightness.dark : Brightness.light,
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           theme: ThemeData(
             useMaterial3: true,
             brightness: Brightness.light,
@@ -84,7 +102,8 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell>
+    with SingleTickerProviderStateMixin {
   int index = 2;
 
   StreamSubscription<dynamic>? _mapCommandSub;
@@ -105,9 +124,22 @@ class _HomeShellState extends State<HomeShell> {
   late final WeatherScreen _weatherScreen;
   late final SettingsScreen _settingsScreen;
 
+  late final AnimationController _tabFxCtrl;
+  late final Animation<double> _tabFxOpacity;
+
   @override
   void initState() {
     super.initState();
+
+    _tabFxCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _tabFxOpacity = CurvedAnimation(
+      parent: _tabFxCtrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
 
     _logsScreen = const LogsScreen();
     _mapsScreen = MapsScreen(
@@ -162,8 +194,21 @@ class _HomeShellState extends State<HomeShell> {
         if (!mounted) return;
 
         await _mapsKey.currentState?.onTabVisible();
-        await _mapsKey.currentState
-            ?.runAssistantNavigate(command.destinationQuery);
+        final state = _mapsKey.currentState;
+        if (state == null) {
+          command.reply?.complete(
+            const mapnavbus.MapNavigationReply(
+              ok: false,
+              message: 'Maps is not ready yet.',
+            ),
+          );
+          return;
+        }
+
+        final reply = await state.runAssistantNavigationCommand(command);
+        if (command.reply != null && !command.reply!.isCompleted) {
+          command.reply!.complete(reply);
+        }
       });
     });
 
@@ -226,13 +271,21 @@ class _HomeShellState extends State<HomeShell> {
     _weatherCommandSub?.cancel();
     _settingsCommandSub?.cancel();
     _logsCommandSub?.cancel();
+    _tabFxCtrl.dispose();
     super.dispose();
   }
 
   void _onTabSelected(int newIndex) {
+    if (newIndex == index) return;
+
     setState(() {
       _loadedTabs.add(newIndex);
       index = newIndex;
+    });
+
+    _tabFxCtrl.forward(from: 0).then((_) {
+      if (!mounted) return;
+      _tabFxCtrl.reverse();
     });
 
     if (newIndex == 1) {
@@ -274,59 +327,109 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final navBg = isDark ? const Color(0xFF181818) : Colors.black;
-    final navIndicator = isDark ? Colors.white10 : Colors.white24;
-    final selectedColor = Colors.white;
-    final unselectedColor = isDark ? Colors.white60 : Colors.white70;
+    final navSurface =
+        isDark ? const Color(0xFF161616) : const Color(0xFF0F0F0F);
+    final navBorder =
+        isDark ? const Color(0xFF2A2A2A) : const Color(0x22FFFFFF);
+    final navIndicator = isDark ? Colors.white10 : Colors.white12;
+    const selectedColor = Colors.white;
+    final unselectedColor = isDark ? Colors.white54 : Colors.white70;
 
     return Scaffold(
-      body: IndexedStack(
-        index: index,
-        children: List.generate(5, _buildTab),
+      body: Stack(
+        children: [
+          IndexedStack(
+            index: index,
+            children: List.generate(5, _buildTab),
+          ),
+          IgnorePointer(
+            child: FadeTransition(
+              opacity: Tween<double>(begin: 0, end: 1).animate(_tabFxOpacity),
+              child: Container(
+                color: (isDark ? Colors.white : Colors.black)
+                    .withValues(alpha: 0.035),
+              ),
+            ),
+          ),
+        ],
       ),
-      bottomNavigationBar: NavigationBarTheme(
-        data: NavigationBarThemeData(
-          backgroundColor: navBg,
-          indicatorColor: navIndicator,
-          iconTheme: WidgetStateProperty.resolveWith((states) {
-            final selected = states.contains(WidgetState.selected);
-            return IconThemeData(
-              color: selected ? selectedColor : unselectedColor,
-            );
-          }),
-          labelTextStyle: WidgetStateProperty.resolveWith((states) {
-            final selected = states.contains(WidgetState.selected);
-            return TextStyle(
-              color: selected ? selectedColor : unselectedColor,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-            );
-          }),
-        ),
-        child: NavigationBar(
-          selectedIndex: index,
-          onDestinationSelected: _onTabSelected,
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.article_outlined),
-              label: 'Logs',
+      bottomNavigationBar: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(26),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: navSurface.withValues(alpha: isDark ? 0.92 : 0.88),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: navBorder),
+                boxShadow: isDark
+                    ? const []
+                    : const [
+                        BoxShadow(
+                          blurRadius: 24,
+                          offset: Offset(0, 10),
+                          color: Color(0x33000000),
+                        ),
+                      ],
+              ),
+              child: NavigationBarTheme(
+                data: NavigationBarThemeData(
+                  backgroundColor: Colors.transparent,
+                  indicatorColor: navIndicator,
+                  height: 72,
+                  iconTheme: WidgetStateProperty.resolveWith((states) {
+                    final selected = states.contains(WidgetState.selected);
+                    return IconThemeData(
+                      color: selected ? selectedColor : unselectedColor,
+                      size: selected ? 26 : 24,
+                    );
+                  }),
+                  labelTextStyle: WidgetStateProperty.resolveWith((states) {
+                    final selected = states.contains(WidgetState.selected);
+                    return TextStyle(
+                      color: selected ? selectedColor : unselectedColor,
+                      fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                      letterSpacing: 0.2,
+                    );
+                  }),
+                ),
+                child: NavigationBar(
+                  selectedIndex: index,
+                  onDestinationSelected: _onTabSelected,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.article_outlined),
+                      selectedIcon: Icon(Icons.article),
+                      label: 'Logs',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.map_outlined),
+                      selectedIcon: Icon(Icons.map),
+                      label: 'Maps',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.mic_none),
+                      selectedIcon: Icon(Icons.mic),
+                      label: 'Assistant',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.cloud_outlined),
+                      selectedIcon: Icon(Icons.cloud),
+                      label: 'Weather',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.settings_outlined),
+                      selectedIcon: Icon(Icons.settings),
+                      label: 'Settings',
+                    ),
+                  ],
+                ),
+              ),
             ),
-            NavigationDestination(
-              icon: Icon(Icons.map_outlined),
-              label: 'Maps',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.mic_none),
-              label: 'Assistant',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.cloud_outlined),
-              label: 'Weather',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              label: 'Settings',
-            ),
-          ],
+          ),
         ),
       ),
     );

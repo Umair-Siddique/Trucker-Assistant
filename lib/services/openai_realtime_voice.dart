@@ -133,8 +133,7 @@ class OpenaiRealtimeVoiceController {
       _audioBecomingNoisySub = session.becomingNoisyEventStream.listen((_) {
         _rtLog('audio_session becomingNoisy (e.g. route unplugged)');
       });
-      _audioDevicesChangedSub =
-          session.devicesChangedEventStream.listen((e) {
+      _audioDevicesChangedSub = session.devicesChangedEventStream.listen((e) {
         _rtLog(
           'audio_session devicesChanged '
           'added=${e.devicesAdded.length} removed=${e.devicesRemoved.length}',
@@ -244,7 +243,8 @@ class OpenaiRealtimeVoiceController {
       );
       await _ensureAudioSessionDebugListeners();
     } catch (e, st) {
-      _rtLog('voice audio session configure/active failed', error: e, stackTrace: st);
+      _rtLog('voice audio session configure/active failed',
+          error: e, stackTrace: st);
     }
   }
 
@@ -369,7 +369,7 @@ class OpenaiRealtimeVoiceController {
         description:
             'Start in-app navigation to a destination. Use this when the user says "start navigation", '
             '"take me to", "navigate to", "start destination", or similar. If a destination is provided, '
-            'the app will search it on the map, pick the best match, compute a route, and start.',
+            'the app will search and ask for safety confirmation before actually starting the route.',
         parameters: {
           'type': 'object',
           'properties': {
@@ -383,8 +383,188 @@ class OpenaiRealtimeVoiceController {
       ),
       (Map<String, dynamic> params) async {
         final dest = (params['destination'] ?? '').toString().trim();
-        mapnavbus.MapNavigationCommandBus.instance.navigate(dest);
-        return {'ok': true, 'destination': dest};
+        final reply = await mapnavbus.MapNavigationCommandBus.instance.send(
+          mapnavbus.MapNavigateCommand(
+            action: mapnavbus.MapNavigationAction.navigate,
+            destinationQuery: dest,
+          ),
+        );
+        return {'ok': reply.ok, 'destination': dest, 'message': reply.message};
+      },
+    );
+
+    await client.addTool(
+      const ToolDefinition(
+        name: 'control_map_navigation',
+        description:
+            'Control map and route state after navigation starts, including disambiguation, confirmation, '
+            'route controls, and map controls (zoom/recenter/layers/traffic).',
+        parameters: {
+          'type': 'object',
+          'properties': {
+            'action': {
+              'type': 'string',
+              'description':
+                  'One of: choose_index, choose_name, confirm_start_route, cancel_navigation, stop_navigation, clear_route, reroute, avoid_tolls, allow_tolls, avoid_highways, allow_highways, zoom_in, zoom_out, recenter, satellite, terrain, map, show_traffic, hide_traffic, eta, miles_left, next_turn, repeat, after_this',
+            },
+            'index': {
+              'type': 'integer',
+              'description': '1-based result index for choose_index.',
+            },
+            'name': {
+              'type': 'string',
+              'description':
+                  'Name text for choose_name (e.g. "Pilot in Katy").',
+            },
+          },
+          'required': ['action'],
+        },
+      ),
+      (Map<String, dynamic> params) async {
+        final action = (params['action'] ?? '').toString().trim().toLowerCase();
+        final index = (params['index'] as num?)?.toInt();
+        final name = (params['name'] ?? '').toString().trim();
+
+        mapnavbus.MapNavigateCommand cmd;
+        switch (action) {
+          case 'choose_index':
+            cmd = mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.chooseResultByIndex,
+              selectionIndex: index,
+            );
+            break;
+          case 'choose_name':
+            cmd = mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.chooseResultByName,
+              selectionName: name,
+            );
+            break;
+          case 'confirm_start_route':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.confirmStartRoute,
+            );
+            break;
+          case 'cancel_navigation':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.cancelNavigation,
+            );
+            break;
+          case 'stop_navigation':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.stopNavigation,
+            );
+            break;
+          case 'clear_route':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.clearRoute,
+            );
+            break;
+          case 'reroute':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.reroute,
+            );
+            break;
+          case 'avoid_tolls':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setAvoidTolls,
+              enabled: true,
+            );
+            break;
+          case 'allow_tolls':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setAvoidTolls,
+              enabled: false,
+            );
+            break;
+          case 'avoid_highways':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setAvoidHighways,
+              enabled: true,
+            );
+            break;
+          case 'allow_highways':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setAvoidHighways,
+              enabled: false,
+            );
+            break;
+          case 'zoom_in':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.zoomIn,
+            );
+            break;
+          case 'zoom_out':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.zoomOut,
+            );
+            break;
+          case 'recenter':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.recenter,
+            );
+            break;
+          case 'satellite':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setMapTypeSatellite,
+            );
+            break;
+          case 'terrain':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setMapTypeTerrain,
+            );
+            break;
+          case 'map':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setMapTypeNormal,
+            );
+            break;
+          case 'show_traffic':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setTraffic,
+              enabled: true,
+            );
+            break;
+          case 'hide_traffic':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.setTraffic,
+              enabled: false,
+            );
+            break;
+          case 'eta':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.queryEta,
+            );
+            break;
+          case 'miles_left':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.queryMilesLeft,
+            );
+            break;
+          case 'next_turn':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.queryNextTurn,
+            );
+            break;
+          case 'repeat':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.repeatInstruction,
+            );
+            break;
+          case 'after_this':
+            cmd = const mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.queryAfterThis,
+            );
+            break;
+          default:
+            return {
+              'ok': false,
+              'message': 'Unsupported action: $action',
+            };
+        }
+
+        final reply =
+            await mapnavbus.MapNavigationCommandBus.instance.send(cmd);
+        return {'ok': reply.ok, 'message': reply.message, 'action': action};
       },
     );
 
@@ -647,9 +827,8 @@ class OpenaiRealtimeVoiceController {
               );
             }
             try {
-              final toSend = _suppressMicToServer
-                  ? Uint8List(chunk.length)
-                  : chunk;
+              final toSend =
+                  _suppressMicToServer ? Uint8List(chunk.length) : chunk;
               if (!_suppressMicToServer) {
                 bytesSent += toSend.length;
               }
@@ -673,7 +852,8 @@ class OpenaiRealtimeVoiceController {
 
         await streamDone.future;
       } catch (e, st) {
-        _rtLog('Mic startStream/listen failed epoch=$epoch', error: e, stackTrace: st);
+        _rtLog('Mic startStream/listen failed epoch=$epoch',
+            error: e, stackTrace: st);
       } finally {
         await _pcmSub?.cancel();
         _pcmSub = null;
@@ -688,7 +868,8 @@ class OpenaiRealtimeVoiceController {
           generation == _micGeneration &&
           _client != null &&
           _client!.isConnected()) {
-        _rtLog('mic pump scheduling stream restart after 220ms (reactivate session)');
+        _rtLog(
+            'mic pump scheduling stream restart after 220ms (reactivate session)');
         await Future<void>.delayed(const Duration(milliseconds: 220));
         await _activateVoiceAudioSession();
       }
@@ -739,7 +920,8 @@ class OpenaiRealtimeVoiceController {
     _micGeneration++;
     final gen = _micGeneration;
     _micPumpRunning = true;
-    _rtLog('startContinuousListening ok micGen=$gen connected=${_client?.isConnected()}');
+    _rtLog(
+        'startContinuousListening ok micGen=$gen connected=${_client?.isConnected()}');
     unawaited(_micPumpLoop(gen));
 
     return true;

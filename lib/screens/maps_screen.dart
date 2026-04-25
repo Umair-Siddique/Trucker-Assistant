@@ -7,6 +7,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../services/app_settings.dart';
 import '../services/google_places_routes_client.dart';
+import '../services/map_navigation_command_bus.dart' as mapnavbus;
 
 class MapsScreen extends StatefulWidget {
   const MapsScreen({
@@ -36,6 +37,10 @@ class MapsScreenState extends State<MapsScreen>
   String? _error;
 
   MapType _mapType = MapType.normal;
+  bool _showTraffic = false;
+  bool _avoidTolls = false;
+  bool _avoidHighways = false;
+  bool _awaitingStartConfirmation = false;
 
   LatLng _currentCenter = const LatLng(29.7604, -95.3698);
   Marker? _currentMarker;
@@ -98,37 +103,397 @@ class MapsScreenState extends State<MapsScreen>
     await _runNearbySearch(category);
   }
 
+  Future<mapnavbus.MapNavigationReply> runAssistantNavigationCommand(
+    mapnavbus.MapNavigateCommand command,
+  ) async {
+    switch (command.action) {
+      case mapnavbus.MapNavigationAction.navigate:
+        return _assistantNavigate(command.destinationQuery);
+      case mapnavbus.MapNavigationAction.chooseResultByIndex:
+        return _assistantChooseByIndex(command.selectionIndex);
+      case mapnavbus.MapNavigationAction.chooseResultByName:
+        return _assistantChooseByName(command.selectionName ?? '');
+      case mapnavbus.MapNavigationAction.confirmStartRoute:
+        return _assistantConfirmStartRoute();
+      case mapnavbus.MapNavigationAction.cancelNavigation:
+        return _assistantCancelPendingNavigation();
+      case mapnavbus.MapNavigationAction.stopNavigation:
+        return _assistantStopNavigation();
+      case mapnavbus.MapNavigationAction.clearRoute:
+        return _assistantClearRoute();
+      case mapnavbus.MapNavigationAction.reroute:
+        return _assistantReroute();
+      case mapnavbus.MapNavigationAction.setAvoidTolls:
+        return _assistantSetAvoidTolls(command.enabled ?? true);
+      case mapnavbus.MapNavigationAction.setAvoidHighways:
+        return _assistantSetAvoidHighways(command.enabled ?? true);
+      case mapnavbus.MapNavigationAction.zoomIn:
+        return _assistantZoomBy(1);
+      case mapnavbus.MapNavigationAction.zoomOut:
+        return _assistantZoomBy(-1);
+      case mapnavbus.MapNavigationAction.recenter:
+        return _assistantRecenter();
+      case mapnavbus.MapNavigationAction.setMapTypeSatellite:
+        return _assistantSetMapType(MapType.hybrid, 'satellite');
+      case mapnavbus.MapNavigationAction.setMapTypeTerrain:
+        return _assistantSetMapType(MapType.terrain, 'terrain');
+      case mapnavbus.MapNavigationAction.setMapTypeNormal:
+        return _assistantSetMapType(MapType.normal, 'map');
+      case mapnavbus.MapNavigationAction.setTraffic:
+        return _assistantSetTraffic(command.enabled ?? true);
+      case mapnavbus.MapNavigationAction.queryEta:
+        return _assistantQueryEta();
+      case mapnavbus.MapNavigationAction.queryMilesLeft:
+        return _assistantQueryMilesLeft();
+      case mapnavbus.MapNavigationAction.queryNextTurn:
+        return _assistantQueryNextTurn();
+      case mapnavbus.MapNavigationAction.repeatInstruction:
+        return _assistantRepeatInstruction();
+      case mapnavbus.MapNavigationAction.queryAfterThis:
+        return _assistantQueryAfterThis();
+    }
+  }
+
   /// Voice action: start navigation to a destination.
-  /// - If [destinationQuery] is empty and a place is already selected, start the route.
-  /// - Otherwise search for the query, pick the first result, compute the route, then start.
+  /// - If [destinationQuery] is empty and a place is already selected, ask for confirmation.
+  /// - Otherwise search and request a confirmation before starting.
   Future<void> runAssistantNavigate(String destinationQuery) async {
+    await _assistantNavigate(destinationQuery);
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantNavigate(
+    String destinationQuery,
+  ) async {
     final q = destinationQuery.trim();
     if (q.isEmpty) {
-      if (_selectedPlace != null) {
-        _startRoute();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pick a destination first.')),
+      if (_selectedPlace == null) {
+        return const mapnavbus.MapNavigationReply(
+          ok: false,
+          message: 'Pick a destination first.',
         );
       }
-      return;
+      _awaitingStartConfirmation = true;
+      final placeName = _placeLabel(_selectedPlace!);
+      return mapnavbus.MapNavigationReply(
+        ok: true,
+        message: 'Start route to $placeName, correct?',
+      );
     }
 
     _searchCtrl.text = q;
     await _runTextSearch(q);
 
-    if (!mounted) return;
-    if (_results.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No results for $q')),
+    if (!mounted) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'Maps is not ready yet.',
       );
-      return;
+    }
+    if (_results.isEmpty) {
+      return mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No results for $q.',
+      );
     }
 
-    final first = _results.first;
-    await _selectPlace(first);
-    if (!mounted) return;
+    if (_results.length > 1) {
+      final top = _results.take(3).toList();
+      final options = <String>[];
+      for (int i = 0; i < top.length; i++) {
+        options.add('${i + 1}) ${_placeLabel(top[i])}');
+      }
+      return mapnavbus.MapNavigationReply(
+        ok: true,
+        message:
+            'I found multiple results: ${options.join(' ; ')}. Say "the second one" or "choose <name>".',
+      );
+    }
+
+    await _selectPlace(_results.first);
+    _awaitingStartConfirmation = true;
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Start route to ${_placeLabel(_results.first)}, correct?',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantChooseByIndex(
+      int? index) async {
+    if (_results.isEmpty) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No search results yet. Say where to navigate first.',
+      );
+    }
+    final i = index ?? 0;
+    if (i < 1 || i > _results.length) {
+      return mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'Please choose a result between 1 and ${_results.length}.',
+      );
+    }
+    final picked = _results[i - 1];
+    await _selectPlace(picked);
+    _awaitingStartConfirmation = true;
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Start route to ${_placeLabel(picked)}, correct?',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantChooseByName(
+      String name) async {
+    final needle = name.trim().toLowerCase();
+    if (needle.isEmpty || _results.isEmpty) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No matching results yet. Try "choose second one".',
+      );
+    }
+    PlaceSearchResult? picked;
+    for (final p in _results) {
+      final label = '${p.name} ${p.address}'.toLowerCase();
+      if (label.contains(needle)) {
+        picked = p;
+        break;
+      }
+    }
+    if (picked == null) {
+      return mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'I could not find "$name" in current results.',
+      );
+    }
+
+    await _selectPlace(picked);
+    _awaitingStartConfirmation = true;
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Start route to ${_placeLabel(picked)}, correct?',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantConfirmStartRoute() {
+    if (_selectedPlace == null) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No destination selected.',
+      );
+    }
     _startRoute();
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Starting route to ${_placeLabel(_selectedPlace!)}.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantCancelPendingNavigation() {
+    if (_awaitingStartConfirmation) {
+      _awaitingStartConfirmation = false;
+      return const mapnavbus.MapNavigationReply(
+        ok: true,
+        message: 'Canceled. I will not start the route.',
+      );
+    }
+    return const mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Nothing to cancel.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantStopNavigation() {
+    if (!_navigating) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'Navigation is not active.',
+      );
+    }
+    setState(() {
+      _navigating = false;
+      _awaitingStartConfirmation = false;
+    });
+    return const mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Navigation stopped.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantClearRoute() {
+    if (_selectedPlace == null && _routePolylines.isEmpty) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No active route to clear.',
+      );
+    }
+    _clearRoute();
+    return const mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Route cleared.',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantReroute() async {
+    final place = _selectedPlace;
+    if (place == null) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No destination selected to reroute.',
+      );
+    }
+    final resumeNav = _navigating;
+    await _selectPlace(place, keepNavigating: resumeNav);
+    if (resumeNav) {
+      _startRoute(showSnackBar: false);
+    }
+    return const mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Route refreshed.',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantSetAvoidTolls(
+      bool enabled) async {
+    _avoidTolls = enabled;
+    final place = _selectedPlace;
+    if (place != null) {
+      await _selectPlace(place, keepNavigating: _navigating);
+    }
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: enabled ? 'Avoiding tolls.' : 'Tolls are allowed again.',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantSetAvoidHighways(
+    bool enabled,
+  ) async {
+    _avoidHighways = enabled;
+    final place = _selectedPlace;
+    if (place != null) {
+      await _selectPlace(place, keepNavigating: _navigating);
+    }
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: enabled ? 'Avoiding highways.' : 'Highways are allowed again.',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantZoomBy(int delta) async {
+    final controller = _controller;
+    if (controller == null) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'Map is not ready yet.',
+      );
+    }
+    await controller.animateCamera(CameraUpdate.zoomBy(delta.toDouble()));
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: delta > 0 ? 'Zoomed in.' : 'Zoomed out.',
+    );
+  }
+
+  Future<mapnavbus.MapNavigationReply> _assistantRecenter() async {
+    await _refreshCurrentLocation(moveCamera: true);
+    return const mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Recentered on your location.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantSetMapType(
+      MapType mapType, String label) {
+    setState(() => _mapType = mapType);
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Switched to $label view.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantSetTraffic(bool enabled) {
+    setState(() => _showTraffic = enabled);
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: enabled ? 'Traffic enabled.' : 'Traffic hidden.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantQueryEta() {
+    if (_selectedPlace == null || _routeMinutes == null) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No active route yet.',
+      );
+    }
+    final mins =
+        _navigating ? (_remainingMinutes ?? _routeMinutes!) : _routeMinutes!;
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'ETA is ${_etaLabel(mins)}.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantQueryMilesLeft() {
+    if (_selectedPlace == null || _routeMiles == null) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No active route yet.',
+      );
+    }
+    final miles =
+        _navigating ? (_remainingMiles ?? _routeMiles!) : _routeMiles!;
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: '${miles.toStringAsFixed(1)} miles remaining.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantQueryNextTurn() {
+    if (!_navigating || _navSteps.isEmpty) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No active turn-by-turn navigation.',
+      );
+    }
+    final step = _navSteps[_currentStepIndex];
+    final miles = _metersToMiles(step.distanceMeters).toStringAsFixed(1);
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'Next turn: ${step.instruction} in $miles miles.',
+    );
+  }
+
+  mapnavbus.MapNavigationReply _assistantRepeatInstruction() {
+    return _assistantQueryNextTurn();
+  }
+
+  mapnavbus.MapNavigationReply _assistantQueryAfterThis() {
+    if (!_navigating || _navSteps.isEmpty) {
+      return const mapnavbus.MapNavigationReply(
+        ok: false,
+        message: 'No active turn-by-turn navigation.',
+      );
+    }
+    final nextIndex = _currentStepIndex + 1;
+    if (nextIndex >= _navSteps.length) {
+      return const mapnavbus.MapNavigationReply(
+        ok: true,
+        message: 'That is the final step.',
+      );
+    }
+    final step = _navSteps[nextIndex];
+    return mapnavbus.MapNavigationReply(
+      ok: true,
+      message: 'After this: ${step.instruction}.',
+    );
+  }
+
+  String _placeLabel(PlaceSearchResult place) {
+    final n = place.name.trim();
+    if (n.isNotEmpty) return n;
+    final a = place.address.trim();
+    if (a.isNotEmpty) return a;
+    return 'destination';
   }
 
   Future<void> _initLocation() async {
@@ -394,7 +759,10 @@ class MapsScreenState extends State<MapsScreen>
     );
   }
 
-  Future<void> _selectPlace(PlaceSearchResult place) async {
+  Future<void> _selectPlace(
+    PlaceSearchResult place, {
+    bool keepNavigating = false,
+  }) async {
     if (place.latitude == null || place.longitude == null) return;
 
     setState(() {
@@ -408,6 +776,8 @@ class MapsScreenState extends State<MapsScreen>
         originLongitude: _currentCenter.longitude,
         destinationLatitude: place.latitude!,
         destinationLongitude: place.longitude!,
+        avoidTolls: _avoidTolls,
+        avoidHighways: _avoidHighways,
       );
 
       final decoded = _decodePolyline(route.encodedPolyline);
@@ -421,7 +791,7 @@ class MapsScreenState extends State<MapsScreen>
         _remainingMiles = miles;
         _routeMinutes = minutes;
         _remainingMinutes = minutes;
-        _navigating = false;
+        _navigating = keepNavigating;
         _currentStepIndex = 0;
         _navSteps
           ..clear()
@@ -495,12 +865,13 @@ class MapsScreenState extends State<MapsScreen>
 
   double _metersToMiles(int meters) => meters / 1609.344;
 
-  void _startRoute() {
+  void _startRoute({bool showSnackBar = true}) {
     if (_selectedPlace == null) return;
 
     setState(() {
       _navigating = true;
       _sheetExpanded = false;
+      _awaitingStartConfirmation = false;
     });
 
     final destination = LatLng(
@@ -513,11 +884,13 @@ class MapsScreenState extends State<MapsScreen>
     final placeName =
         _selectedPlace!.name.isEmpty ? 'destination' : _selectedPlace!.name;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Navigation started to $placeName'),
-      ),
-    );
+    if (showSnackBar) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Navigation started to $placeName'),
+        ),
+      );
+    }
   }
 
   void _nextStep() {
@@ -561,6 +934,7 @@ class MapsScreenState extends State<MapsScreen>
     _currentStepIndex = 0;
     _navSteps.clear();
     _routePolylines.clear();
+    _awaitingStartConfirmation = false;
   }
 
   String _etaLabel(int minutes) {
@@ -579,9 +953,8 @@ class MapsScreenState extends State<MapsScreen>
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final panelBg = isDark
-        ? const Color(0xE61A1A1A)
-        : Colors.white.withOpacity(0.96);
+    final panelBg =
+        isDark ? const Color(0xE61A1A1A) : Colors.white.withOpacity(0.96);
     final borderColor =
         isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
     final titleColor = isDark ? Colors.white : Colors.black87;
@@ -601,6 +974,7 @@ class MapsScreenState extends State<MapsScreen>
               zoom: 12,
             ),
             mapType: _mapType,
+            trafficEnabled: _showTraffic,
             myLocationEnabled: _locationAllowed,
             myLocationButtonEnabled: false,
             zoomControlsEnabled: false,
@@ -899,7 +1273,9 @@ class MapsScreenState extends State<MapsScreen>
                                 ),
                                 const SizedBox(width: 8),
                                 _RouteStatChip(
-                                  label: _navigating ? 'On Route' : _mapTypeLabel(),
+                                  label: _navigating
+                                      ? 'On Route'
+                                      : _mapTypeLabel(),
                                   isDark: isDark,
                                 ),
                               ],
@@ -930,7 +1306,8 @@ class MapsScreenState extends State<MapsScreen>
                                         vertical: 14,
                                       ),
                                     ),
-                                    onPressed: _navigating ? _nextStep : _startRoute,
+                                    onPressed:
+                                        _navigating ? _nextStep : _startRoute,
                                     child: Text(
                                       _navigating ? 'Next Step' : 'Start',
                                     ),
@@ -970,7 +1347,9 @@ class MapsScreenState extends State<MapsScreen>
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 Text(
-                                  _activeLabel.isEmpty ? 'Results' : _activeLabel,
+                                  _activeLabel.isEmpty
+                                      ? 'Results'
+                                      : _activeLabel,
                                   style: TextStyle(
                                     color: titleColor,
                                     fontWeight: FontWeight.w800,
@@ -1082,9 +1461,7 @@ class _CategoryChip extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Material(
-      color: isDark
-          ? const Color(0xE61A1A1A)
-          : Colors.white.withOpacity(0.96),
+      color: isDark ? const Color(0xE61A1A1A) : Colors.white.withOpacity(0.96),
       elevation: isDark ? 0 : 5,
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
@@ -1095,9 +1472,7 @@ class _CategoryChip extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: isDark
-                  ? const Color(0xFF2D2D2D)
-                  : const Color(0xFFEAEAEA),
+              color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
             ),
           ),
           child: Row(
@@ -1138,9 +1513,7 @@ class _MapActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: isDark
-          ? const Color(0xE61A1A1A)
-          : Colors.white.withOpacity(0.96),
+      color: isDark ? const Color(0xE61A1A1A) : Colors.white.withOpacity(0.96),
       elevation: isDark ? 0 : 6,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
@@ -1152,9 +1525,7 @@ class _MapActionButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: isDark
-                  ? const Color(0xFF2D2D2D)
-                  : const Color(0xFFEAEAEA),
+              color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
             ),
           ),
           child: Icon(
