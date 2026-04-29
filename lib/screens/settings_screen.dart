@@ -28,7 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen>
 
     _enterCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 520),
+      duration: const Duration(milliseconds: 700),
     )..forward();
 
     final s = widget.settings;
@@ -71,6 +71,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _showAccountSheet() {
+    HapticFeedback.lightImpact();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -273,6 +274,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _showAssistantVoiceSheet() {
+    HapticFeedback.lightImpact();
     final s = widget.settings;
 
     showModalBottomSheet(
@@ -453,6 +455,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _showAppPreferencesSheet() {
+    HapticFeedback.lightImpact();
     final s = widget.settings;
 
     showModalBottomSheet(
@@ -502,13 +505,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                                 bottom: 18 + MediaQuery.of(context).padding.bottom,
                               ),
                               children: [
-                                _SheetCardInfo(
-                                  isDark: isDark,
-                                  icon: Icons.cloud_off,
-                                  text:
-                                      'Backend removed — app runs fully in Flutter.',
-                                ),
-                                const SizedBox(height: 14),
                                 _SheetSwitchTile(
                                   icon: Icons.notifications_none,
                                   title: 'Notifications',
@@ -607,6 +603,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _showDrivingPreferencesSheet() {
+    HapticFeedback.lightImpact();
     final s = widget.settings;
 
     showModalBottomSheet(
@@ -769,6 +766,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _showLegalSupportSheet() {
+    HapticFeedback.lightImpact();
     showModalBottomSheet(
       context: context,
       backgroundColor: _sheetBg(context),
@@ -853,7 +851,6 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Color _sheetBg(BuildContext context) {
-    // Match the app-wide surface used by Settings screen.
     return Theme.of(context).scaffoldBackgroundColor;
   }
 
@@ -865,12 +862,15 @@ class _SettingsScreenState extends State<SettingsScreen>
         final s = widget.settings;
         final isDark = Theme.of(context).brightness == Brightness.dark;
         final screenBg =
-            isDark ? const Color(0xFF111111) : const Color(0xFFF4F4F4);
+            isDark ? const Color(0xFF111111) : const Color(0xFFF2F2F7);
         final cardBg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
         final borderColor =
             isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
         final textColor = isDark ? Colors.white : Colors.black87;
-        final subtextColor = isDark ? Colors.white70 : Colors.black54;
+
+        final initial = _nameCtrl.text.trim().isEmpty
+            ? 'R'
+            : _nameCtrl.text.trim()[0].toUpperCase();
 
         return Scaffold(
           backgroundColor: screenBg,
@@ -884,32 +884,44 @@ class _SettingsScreenState extends State<SettingsScreen>
                 : SystemUiOverlayStyle.dark,
             title: const Text(
               'Settings',
-              style: TextStyle(fontWeight: FontWeight.w900),
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 22),
             ),
             actions: [
               Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
+                padding: const EdgeInsets.only(right: 12),
+                child: GestureDetector(
                   onTap: _showAccountSheet,
                   child: Container(
-                    width: 42,
-                    height: 42,
+                    width: 40,
+                    height: 40,
                     decoration: BoxDecoration(
-                      color: cardBg,
+                      color: Colors.black,
                       shape: BoxShape.circle,
-                      border: Border.all(color: borderColor),
+                      border: Border.all(
+                        color: isDark
+                            ? const Color(0xFF353535)
+                            : Colors.black,
+                        width: 2,
+                      ),
                       boxShadow: isDark
                           ? const []
                           : const [
                               BoxShadow(
-                                blurRadius: 10,
-                                offset: Offset(0, 4),
-                                color: Color(0x14000000),
+                                blurRadius: 8,
+                                offset: Offset(0, 2),
+                                color: Color(0x20000000),
                               ),
                             ],
                     ),
-                    child: Icon(Icons.person_outline, color: textColor),
+                    alignment: Alignment.center,
+                    child: Text(
+                      initial,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -918,39 +930,40 @@ class _SettingsScreenState extends State<SettingsScreen>
           body: SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    'Customize your experience',
-                    style: TextStyle(
-                      color: subtextColor,
-                      fontWeight: FontWeight.w600,
+                  _EnterAnim(
+                    controller: _enterCtrl,
+                    index: 0,
+                    child: _QuickStatusCard(
+                      isDark: isDark,
+                      title: _nameCtrl.text.trim().isEmpty
+                          ? 'Driver Profile'
+                          : _nameCtrl.text.trim(),
+                      subtitle: s.signedIn
+                          ? 'Signed in · Ready to go'
+                          : 'Guest mode · Sign in for full features',
+                      badge: s.signedIn ? 'Live' : 'Guest',
+                      isLive: s.signedIn,
+                      initial: initial,
+                      onTap: _showAccountSheet,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  _QuickStatusCard(
-                    isDark: isDark,
-                    title: _nameCtrl.text.trim().isEmpty
-                        ? 'Driver Profile'
-                        : _nameCtrl.text.trim(),
-                    subtitle: s.signedIn
-                        ? 'Signed in • Ready to go'
-                        : 'Guest mode • Sign in for full features',
-                    badge: s.signedIn ? 'Live' : 'Guest',
-                    onTap: _showAccountSheet,
-                  ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 22),
                   Expanded(
                     child: ListView(
-                      padding: const EdgeInsets.only(bottom: 20),
+                      padding: const EdgeInsets.only(bottom: 24),
                       children: [
+                        _SectionLabel(label: 'ACCOUNT', isDark: isDark),
+                        const SizedBox(height: 8),
                         _EnterAnim(
                           controller: _enterCtrl,
-                          index: 0,
+                          index: 1,
                           child: _MainSettingsTile(
                             icon: Icons.person_outline,
+                            accentColor: const Color(0xFF007AFF),
                             title: 'Account',
                             subtitle:
                                 'Profile, sign in, truck, and company details',
@@ -959,27 +972,31 @@ class _SettingsScreenState extends State<SettingsScreen>
                             onTap: _showAccountSheet,
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        _EnterAnim(
-                          controller: _enterCtrl,
-                          index: 1,
-                          child: _MainSettingsTile(
-                            icon: Icons.smart_toy_outlined,
-                            title: 'Assistant & Voice',
-                            subtitle:
-                                'Voice replies, hold to talk, and assistant voice',
-                            trailingText:
-                                s.voice[0].toUpperCase() + s.voice.substring(1),
-                            isDark: isDark,
-                            onTap: _showAssistantVoiceSheet,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 22),
+                        _SectionLabel(label: 'PREFERENCES', isDark: isDark),
+                        const SizedBox(height: 8),
                         _EnterAnim(
                           controller: _enterCtrl,
                           index: 2,
                           child: _MainSettingsTile(
+                            icon: Icons.smart_toy_outlined,
+                            accentColor: const Color(0xFF9C27B0),
+                            title: 'Assistant & Voice',
+                            subtitle:
+                                'Voice replies, hold to talk, and assistant voice',
+                            trailingText: s.voice[0].toUpperCase() +
+                                s.voice.substring(1),
+                            isDark: isDark,
+                            onTap: _showAssistantVoiceSheet,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        _EnterAnim(
+                          controller: _enterCtrl,
+                          index: 3,
+                          child: _MainSettingsTile(
                             icon: Icons.tune,
+                            accentColor: const Color(0xFFFF9500),
                             title: 'App Preferences',
                             subtitle:
                                 'Backend, notifications, permissions, units, and privacy',
@@ -987,12 +1004,13 @@ class _SettingsScreenState extends State<SettingsScreen>
                             onTap: _showAppPreferencesSheet,
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
                         _EnterAnim(
                           controller: _enterCtrl,
-                          index: 3,
+                          index: 4,
                           child: _MainSettingsTile(
                             icon: Icons.local_shipping_outlined,
+                            accentColor: const Color(0xFF34C759),
                             title: 'Driving Preferences',
                             subtitle:
                                 'Truck mode, tolls, hazmat, trailer, and routing',
@@ -1000,12 +1018,15 @@ class _SettingsScreenState extends State<SettingsScreen>
                             onTap: _showDrivingPreferencesSheet,
                           ),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 22),
+                        _SectionLabel(label: 'MORE', isDark: isDark),
+                        const SizedBox(height: 8),
                         _EnterAnim(
                           controller: _enterCtrl,
-                          index: 4,
+                          index: 5,
                           child: _MainSettingsTile(
                             icon: Icons.description_outlined,
+                            accentColor: const Color(0xFF636366),
                             title: 'Legal & Support',
                             subtitle:
                                 'Privacy policy, terms, support, bugs, and app info',
@@ -1026,12 +1047,16 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 }
 
+// ── Status card ────────────────────────────────────────────────────────────────
+
 class _QuickStatusCard extends StatelessWidget {
   const _QuickStatusCard({
     required this.isDark,
     required this.title,
     required this.subtitle,
     required this.badge,
+    required this.isLive,
+    required this.initial,
     required this.onTap,
   });
 
@@ -1039,6 +1064,8 @@ class _QuickStatusCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final String badge;
+  final bool isLive;
+  final String initial;
   final VoidCallback onTap;
 
   @override
@@ -1047,35 +1074,44 @@ class _QuickStatusCard extends StatelessWidget {
     final borderColor =
         isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
     final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white70 : Colors.black54;
+    final subtextColor = isDark ? Colors.white54 : Colors.black45;
 
     return Material(
       color: cardBg,
-      elevation: isDark ? 0 : 3,
-      shadowColor: const Color(0x14000000),
-      borderRadius: BorderRadius.circular(20),
+      elevation: isDark ? 0 : 5,
+      shadowColor: const Color(0x16000000),
+      borderRadius: BorderRadius.circular(22),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Ink(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(22),
             border: Border.all(color: borderColor),
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
+                // Avatar
                 Container(
-                  width: 46,
-                  height: 46,
+                  width: 52,
+                  height: 52,
                   decoration: BoxDecoration(
                     color: Colors.black,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  child: const Icon(Icons.shield_outlined, color: Colors.white),
+                  alignment: Alignment.center,
+                  child: Text(
+                    initial,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1086,45 +1122,67 @@ class _QuickStatusCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: textColor,
-                          fontSize: 15,
+                          fontSize: 16,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: subtextColor,
-                          height: 1.25,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      const SizedBox(height: 5),
+                      Row(
+                        children: [
+                          if (isLive) ...[
+                            const _LivePulseDot(),
+                            const SizedBox(width: 6),
+                          ],
+                          Expanded(
+                            child: Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: subtextColor,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    badge,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 300),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: isLive
+                            ? const Color(0xFF34C759)
+                            : (isDark
+                                ? const Color(0xFF2D2D2D)
+                                : const Color(0xFFF0F0F0)),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        badge,
+                        style: TextStyle(
+                          color: isLive ? Colors.white : subtextColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                  Icons.chevron_right,
-                  color: isDark ? Colors.white38 : Colors.black38,
+                    const SizedBox(height: 8),
+                    Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 13,
+                      color: isDark ? Colors.white38 : Colors.black38,
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1134,6 +1192,249 @@ class _QuickStatusCard extends StatelessWidget {
     );
   }
 }
+
+// ── Pulsing live dot ───────────────────────────────────────────────────────────
+
+class _LivePulseDot extends StatefulWidget {
+  const _LivePulseDot();
+
+  @override
+  State<_LivePulseDot> createState() => _LivePulseDotState();
+}
+
+class _LivePulseDotState extends State<_LivePulseDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+    _scale = Tween<double>(begin: 0.65, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+    _opacity = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scale,
+      child: FadeTransition(
+        opacity: _opacity,
+        child: Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(
+            color: Color(0xFF34C759),
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Section label ──────────────────────────────────────────────────────────────
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({required this.label, required this.isDark});
+
+  final String label;
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          color: isDark ? Colors.white38 : Colors.black38,
+          letterSpacing: 0.9,
+        ),
+      ),
+    );
+  }
+}
+
+// ── Main settings tile (with press-scale) ─────────────────────────────────────
+
+class _MainSettingsTile extends StatefulWidget {
+  const _MainSettingsTile({
+    required this.icon,
+    required this.accentColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    required this.isDark,
+    this.trailingText,
+  });
+
+  final IconData icon;
+  final Color accentColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool isDark;
+  final String? trailingText;
+
+  @override
+  State<_MainSettingsTile> createState() => _MainSettingsTileState();
+}
+
+class _MainSettingsTileState extends State<_MainSettingsTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pressCtrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _pressCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 80),
+      reverseDuration: const Duration(milliseconds: 220),
+    );
+    _scale = Tween<double>(begin: 1.0, end: 0.97).animate(
+      CurvedAnimation(parent: _pressCtrl, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pressCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final cardBg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
+    final borderColor =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
+    final textColor = isDark ? Colors.white : Colors.black87;
+    final subtextColor = isDark ? Colors.white54 : Colors.black45;
+    final iconBg = widget.accentColor.withOpacity(isDark ? 0.16 : 0.10);
+
+    return ScaleTransition(
+      scale: _scale,
+      child: GestureDetector(
+        onTapDown: (_) => _pressCtrl.forward(),
+        onTapUp: (_) {
+          _pressCtrl.reverse();
+          widget.onTap();
+        },
+        onTapCancel: () => _pressCtrl.reverse(),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: cardBg,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor),
+            boxShadow: isDark
+                ? const []
+                : const [
+                    BoxShadow(
+                      blurRadius: 12,
+                      offset: Offset(0, 3),
+                      color: Color(0x0C000000),
+                    ),
+                  ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(widget.icon, color: widget.accentColor, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.title,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: textColor,
+                            ),
+                          ),
+                        ),
+                        if (widget.trailingText != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isDark
+                                  ? const Color(0xFF2A2A2A)
+                                  : const Color(0xFFF0F0F0),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              widget.trailingText!,
+                              style: TextStyle(
+                                color: subtextColor,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.subtitle,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: subtextColor,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right,
+                color: isDark ? Colors.white38 : Colors.black26,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Entrance animation ─────────────────────────────────────────────────────────
 
 class _EnterAnim extends StatelessWidget {
   const _EnterAnim({
@@ -1148,19 +1449,19 @@ class _EnterAnim extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final begin = (index * 0.08).clamp(0.0, 0.6);
-    final end = (begin + 0.45).clamp(0.0, 1.0);
+    final begin = (index * 0.10).clamp(0.0, 0.65);
+    final end = (begin + 0.50).clamp(0.0, 1.0);
 
     final anim = CurvedAnimation(
       parent: controller,
-      curve: Interval(begin, end, curve: Curves.easeOutCubic),
+      curve: Interval(begin, end, curve: Curves.easeOutQuart),
     );
 
     return FadeTransition(
       opacity: anim,
       child: SlideTransition(
         position: Tween<Offset>(
-          begin: const Offset(0, 0.08),
+          begin: const Offset(0, 0.10),
           end: Offset.zero,
         ).animate(anim),
         child: child,
@@ -1169,10 +1470,10 @@ class _EnterAnim extends StatelessWidget {
   }
 }
 
+// ── Themed sheet wrapper ───────────────────────────────────────────────────────
+
 class _ThemedSheet extends StatelessWidget {
-  const _ThemedSheet({
-    required this.builder,
-  });
+  const _ThemedSheet({required this.builder});
 
   final Widget Function(
     BuildContext context,
@@ -1206,6 +1507,8 @@ class _ThemedSheet extends StatelessWidget {
   }
 }
 
+// ── Sheet handle ───────────────────────────────────────────────────────────────
+
 class _SheetHandle extends StatelessWidget {
   const _SheetHandle({required this.isDark});
 
@@ -1226,123 +1529,7 @@ class _SheetHandle extends StatelessWidget {
   }
 }
 
-class _MainSettingsTile extends StatelessWidget {
-  const _MainSettingsTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    required this.isDark,
-    this.trailingText,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-  final bool isDark;
-  final String? trailingText;
-
-  @override
-  Widget build(BuildContext context) {
-    final cardBg = isDark ? const Color(0xFF1A1A1A) : Colors.white;
-    final softBg = isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
-    final borderColor =
-        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white70 : Colors.black54;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      onTap: onTap,
-      child: Ink(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: borderColor),
-          boxShadow: isDark
-              ? const []
-              : const [
-                  BoxShadow(
-                    blurRadius: 10,
-                    offset: Offset(0, 3),
-                    color: Color(0x10000000),
-                  ),
-                ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: softBg,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: textColor),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: textColor,
-                          ),
-                        ),
-                      ),
-                      if (trailingText != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            trailingText!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: subtextColor,
-                      height: 1.35,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Icon(
-              Icons.chevron_right,
-              color: isDark ? Colors.white38 : Colors.black38,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// ── Sheet widgets (unchanged) ──────────────────────────────────────────────────
 
 class _ToggleRow extends StatelessWidget {
   const _ToggleRow({
@@ -1423,8 +1610,6 @@ class _ToggleRow extends StatelessWidget {
     );
   }
 }
-
-// (removed unused legacy sheet tiles)
 
 class _ProfileField extends StatelessWidget {
   const _ProfileField({
@@ -1697,53 +1882,6 @@ class _SheetValueTile extends StatelessWidget {
           Icon(
             Icons.chevron_right,
             color: isDark ? Colors.white38 : Colors.black38,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SheetCardInfo extends StatelessWidget {
-  const _SheetCardInfo({
-    required this.isDark,
-    required this.icon,
-    required this.text,
-  });
-
-  final bool isDark;
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final softBg = isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white70 : Colors.black54;
-
-    return _SheetCardBase(
-      isDark: isDark,
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: softBg,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: subtextColor),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              text,
-              style: TextStyle(
-                color: textColor,
-                fontWeight: FontWeight.w700,
-                height: 1.25,
-              ),
-            ),
           ),
         ],
       ),

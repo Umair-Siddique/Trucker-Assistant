@@ -9,12 +9,16 @@ class LogFolderDetailScreen extends StatefulWidget {
     required this.folderId,
     required this.folderTitle,
     required this.folderSubtitle,
+    required this.folderIcon,
+    required this.accentColor,
     this.heroTag,
   });
 
   final String folderId;
   final String folderTitle;
   final String folderSubtitle;
+  final IconData folderIcon;
+  final Color accentColor;
   final String? heroTag;
 
   @override
@@ -37,7 +41,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
     super.initState();
     _enterCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 500),
+      duration: const Duration(milliseconds: 600),
     );
     _loadFolder();
   }
@@ -97,6 +101,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
   }
 
   void _showAddEntrySheet() {
+    HapticFeedback.lightImpact();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = Theme.of(context).scaffoldBackgroundColor;
     final softBg =
@@ -104,6 +109,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subtextColor = isDark ? Colors.white70 : Colors.black54;
+    final accent = widget.accentColor;
 
     showModalBottomSheet(
       context: context,
@@ -123,7 +129,6 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Handle
               Center(
                 child: Container(
                   width: 40,
@@ -135,33 +140,47 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                 ),
               ),
               const SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Add ${widget.folderTitle} Entry',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: textColor,
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(isDark ? 0.16 : 0.10),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(
+                          color: accent.withOpacity(isDark ? 0.22 : 0.18)),
+                    ),
+                    child: Icon(widget.folderIcon, color: accent, size: 22),
                   ),
-                ),
-              ),
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  widget.folderSubtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: subtextColor,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Add ${widget.folderTitle} Entry',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: textColor,
+                          ),
+                        ),
+                        Text(
+                          widget.folderSubtitle,
+                          style: TextStyle(fontSize: 12, color: subtextColor),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ),
               const SizedBox(height: 18),
               TextField(
                 controller: _titleCtrl,
-                style: TextStyle(
-                    color: textColor, fontWeight: FontWeight.w700),
+                style:
+                    TextStyle(color: textColor, fontWeight: FontWeight.w700),
                 decoration: InputDecoration(
                   labelText: 'Title',
                   labelStyle: TextStyle(color: subtextColor),
@@ -179,8 +198,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide:
-                        const BorderSide(color: Colors.black, width: 1.5),
+                    borderSide: BorderSide(color: accent, width: 1.5),
                   ),
                 ),
               ),
@@ -210,8 +228,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide:
-                        const BorderSide(color: Colors.black, width: 1.5),
+                    borderSide: BorderSide(color: accent, width: 1.5),
                   ),
                 ),
               ),
@@ -219,7 +236,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
               SizedBox(
                 width: double.infinity,
                 child: Material(
-                  color: Colors.black,
+                  color: accent,
                   borderRadius: BorderRadius.circular(16),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
@@ -268,13 +285,13 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF4F4F4);
+    final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF2F2F7);
     final surface = isDark ? const Color(0xFF181818) : Colors.white;
-    final softBg =
-        isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7);
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subtextColor = isDark ? Colors.white70 : Colors.black54;
+    final accent = widget.accentColor;
+    final iconBg = accent.withOpacity(isDark ? 0.16 : 0.10);
 
     return Scaffold(
       backgroundColor: bg,
@@ -296,14 +313,15 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
             Hero(
               tag: widget.heroTag ?? 'folder_icon_${widget.folderId}',
               child: Container(
-                width: 36,
-                height: 36,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(11),
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: accent.withOpacity(isDark ? 0.22 : 0.18)),
                 ),
-                child: const Icon(Icons.folder_open_rounded,
-                    color: Colors.white, size: 18),
+                child: Icon(widget.folderIcon, color: accent, size: 20),
               ),
             ),
             const SizedBox(width: 10),
@@ -322,10 +340,7 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                   ),
                   Text(
                     widget.folderSubtitle,
-                    style: TextStyle(
-                      color: subtextColor,
-                      fontSize: 11,
-                    ),
+                    style: TextStyle(color: subtextColor, fontSize: 11),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -336,22 +351,18 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Material(
-              color: surface,
-              borderRadius: BorderRadius.circular(13),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: _showAddEntrySheet,
-                child: Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: border),
-                  ),
-                  child: Icon(Icons.add_rounded,
-                      color: textColor, size: 20),
+            child: GestureDetector(
+              onTap: _showAddEntrySheet,
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(isDark ? 0.16 : 0.10),
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(
+                      color: accent.withOpacity(isDark ? 0.22 : 0.18)),
                 ),
+                child: Icon(Icons.add_rounded, color: accent, size: 22),
               ),
             ),
           ),
@@ -364,7 +375,10 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const CircularProgressIndicator(strokeWidth: 2),
+                    CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: accent,
+                    ),
                     const SizedBox(height: 14),
                     Text(
                       'Loading entries...',
@@ -377,26 +391,27 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                 ),
               )
             : _entries.isEmpty
-                ? _EmptyEntries(isDark: isDark)
+                ? _EmptyEntries(isDark: isDark, accentColor: accent,
+                    folderIcon: widget.folderIcon)
                 : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                     itemCount: _entries.length,
                     itemBuilder: (_, i) {
                       final entry = _entries[i];
 
-                      final start = (i * 0.07).clamp(0.0, 0.7);
-                      final end = (start + 0.4).clamp(0.0, 1.0);
+                      final start = (i * 0.08).clamp(0.0, 0.65);
+                      final end = (start + 0.45).clamp(0.0, 1.0);
                       final anim = CurvedAnimation(
                         parent: _enterCtrl,
                         curve: Interval(start, end,
-                            curve: Curves.easeOutCubic),
+                            curve: Curves.easeOutQuart),
                       );
 
                       return FadeTransition(
                         opacity: anim,
                         child: SlideTransition(
                           position: Tween<Offset>(
-                            begin: const Offset(0, 0.05),
+                            begin: const Offset(0, 0.08),
                             end: Offset.zero,
                           ).animate(anim),
                           child: Padding(
@@ -406,125 +421,153 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
                               direction: DismissDirection.endToStart,
                               background: Container(
                                 alignment: Alignment.centerRight,
-                                padding:
-                                    const EdgeInsets.only(right: 20),
+                                padding: const EdgeInsets.only(right: 20),
                                 decoration: BoxDecoration(
                                   color: Colors.red.shade700,
                                   borderRadius: BorderRadius.circular(20),
                                 ),
-                                child: const Icon(Icons.delete_outline_rounded,
-                                    color: Colors.white, size: 24),
+                                child: const Icon(
+                                  Icons.delete_outline_rounded,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
                               ),
                               onDismissed: (_) => _deleteEntry(entry),
                               child: Material(
                                 color: surface,
                                 elevation: isDark ? 0 : 2,
-                                shadowColor: const Color(0x10000000),
+                                shadowColor: const Color(0x0C000000),
                                 borderRadius: BorderRadius.circular(20),
                                 clipBehavior: Clip.antiAlias,
                                 child: Container(
-                                  padding: const EdgeInsets.all(16),
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(20),
                                     border: Border.all(color: border),
                                   ),
-                                  child: Column(
+                                  child: Row(
                                     crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                        CrossAxisAlignment.stretch,
                                     children: [
-                                      Row(
-                                        children: [
-                                          Container(
-                                            width: 36,
-                                            height: 36,
-                                            decoration: BoxDecoration(
-                                              color: softBg,
-                                              borderRadius:
-                                                  BorderRadius.circular(11),
-                                            ),
-                                            child: Icon(
-                                              Icons.description_outlined,
-                                              size: 18,
-                                              color: isDark
-                                                  ? Colors.white60
-                                                  : Colors.black45,
-                                            ),
+                                      // Accent left strip
+                                      Container(
+                                        width: 4,
+                                        decoration: BoxDecoration(
+                                          color: accent,
+                                          borderRadius: const BorderRadius.only(
+                                            topLeft: Radius.circular(20),
+                                            bottomLeft: Radius.circular(20),
                                           ),
-                                          const SizedBox(width: 10),
-                                          Expanded(
-                                            child: Text(
-                                              entry.title,
-                                              style: TextStyle(
-                                                color: textColor,
-                                                fontWeight: FontWeight.w900,
-                                                fontSize: 15,
-                                              ),
-                                            ),
-                                          ),
-                                          PopupMenuButton<String>(
-                                            color: surface,
-                                            iconColor: subtextColor,
-                                            iconSize: 20,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(14),
-                                            ),
-                                            onSelected: (value) {
-                                              if (value == 'delete') {
-                                                _deleteEntry(entry);
-                                              }
-                                            },
-                                            itemBuilder: (_) => const [
-                                              PopupMenuItem(
-                                                value: 'delete',
-                                                child: Row(
-                                                  children: [
-                                                    Icon(
-                                                      Icons
-                                                          .delete_outline_rounded,
-                                                      size: 18,
-                                                      color: Colors.red,
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(14),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Container(
+                                                    width: 34,
+                                                    height: 34,
+                                                    decoration: BoxDecoration(
+                                                      color: iconBg,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              10),
                                                     ),
-                                                    SizedBox(width: 8),
-                                                    Text(
-                                                      'Delete',
+                                                    child: Icon(
+                                                      widget.folderIcon,
+                                                      size: 17,
+                                                      color: accent,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 10),
+                                                  Expanded(
+                                                    child: Text(
+                                                      entry.title,
                                                       style: TextStyle(
-                                                          color: Colors.red),
+                                                        color: textColor,
+                                                        fontWeight:
+                                                            FontWeight.w900,
+                                                        fontSize: 15,
+                                                      ),
                                                     ),
-                                                  ],
+                                                  ),
+                                                  PopupMenuButton<String>(
+                                                    color: surface,
+                                                    iconColor: subtextColor,
+                                                    iconSize: 20,
+                                                    shape:
+                                                        RoundedRectangleBorder(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              14),
+                                                    ),
+                                                    onSelected: (value) {
+                                                      if (value == 'delete') {
+                                                        _deleteEntry(entry);
+                                                      }
+                                                    },
+                                                    itemBuilder: (_) =>
+                                                        const [
+                                                      PopupMenuItem(
+                                                        value: 'delete',
+                                                        child: Row(
+                                                          children: [
+                                                            Icon(
+                                                              Icons
+                                                                  .delete_outline_rounded,
+                                                              size: 18,
+                                                              color: Colors.red,
+                                                            ),
+                                                            SizedBox(width: 8),
+                                                            Text(
+                                                              'Delete',
+                                                              style: TextStyle(
+                                                                  color: Colors
+                                                                      .red),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Text(
+                                                entry.note,
+                                                style: TextStyle(
+                                                  color: subtextColor,
+                                                  height: 1.45,
+                                                  fontSize: 13,
                                                 ),
+                                              ),
+                                              const SizedBox(height: 12),
+                                              Row(
+                                                children: [
+                                                  Icon(
+                                                    Icons.schedule_rounded,
+                                                    size: 13,
+                                                    color: accent.withOpacity(0.7),
+                                                  ),
+                                                  const SizedBox(width: 5),
+                                                  Text(
+                                                    _formatTime(entry.createdAt),
+                                                    style: TextStyle(
+                                                      color: subtextColor,
+                                                      fontSize: 12,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ],
                                           ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 10),
-                                      Text(
-                                        entry.note,
-                                        style: TextStyle(
-                                          color: subtextColor,
-                                          height: 1.45,
-                                          fontSize: 13,
                                         ),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            Icons.schedule_rounded,
-                                            size: 13,
-                                            color: subtextColor,
-                                          ),
-                                          const SizedBox(width: 5),
-                                          Text(
-                                            _formatTime(entry.createdAt),
-                                            style: TextStyle(
-                                              color: subtextColor,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ],
                                       ),
                                     ],
                                   ),
@@ -541,10 +584,18 @@ class _LogFolderDetailScreenState extends State<LogFolderDetailScreen>
   }
 }
 
+// ── Empty entries state ────────────────────────────────────────────────────────
+
 class _EmptyEntries extends StatelessWidget {
-  const _EmptyEntries({required this.isDark});
+  const _EmptyEntries({
+    required this.isDark,
+    required this.accentColor,
+    required this.folderIcon,
+  });
 
   final bool isDark;
+  final Color accentColor;
+  final IconData folderIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -552,6 +603,7 @@ class _EmptyEntries extends StatelessWidget {
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subtextColor = isDark ? Colors.white54 : Colors.black38;
+    final iconBg = accentColor.withOpacity(isDark ? 0.16 : 0.10);
 
     return Center(
       child: Padding(
@@ -569,19 +621,15 @@ class _EmptyEntries extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 64,
-                  height: 64,
+                  width: 68,
+                  height: 68,
                   decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF222222)
-                        : const Color(0xFFF0F0F0),
+                    color: iconBg,
                     shape: BoxShape.circle,
+                    border: Border.all(
+                        color: accentColor.withOpacity(isDark ? 0.22 : 0.18)),
                   ),
-                  child: Icon(
-                    Icons.folder_open_outlined,
-                    size: 30,
-                    color: subtextColor,
-                  ),
+                  child: Icon(folderIcon, size: 30, color: accentColor),
                 ),
                 const SizedBox(height: 16),
                 Text(

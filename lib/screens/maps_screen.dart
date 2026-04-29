@@ -49,7 +49,6 @@ class MapsScreenState extends State<MapsScreen>
 
   List<PlaceSearchResult> _results = [];
   String _activeLabel = '';
-  bool _sheetExpanded = false;
 
   PlaceSearchResult? _selectedPlace;
   double? _routeMiles;
@@ -154,9 +153,6 @@ class MapsScreenState extends State<MapsScreen>
     }
   }
 
-  /// Voice action: start navigation to a destination.
-  /// - If [destinationQuery] is empty and a place is already selected, ask for confirmation.
-  /// - Otherwise search and request a confirmation before starting.
   Future<void> runAssistantNavigate(String destinationQuery) async {
     await _assistantNavigate(destinationQuery);
   }
@@ -172,6 +168,18 @@ class MapsScreenState extends State<MapsScreen>
           message: 'Pick a destination first.',
         );
       }
+      // Already navigating → report live status instead of re-asking.
+      if (_navigating) {
+        final placeName = _placeLabel(_selectedPlace!);
+        final miles =
+            (_remainingMiles ?? _routeMiles ?? 0).toStringAsFixed(1);
+        final eta = _etaLabel(_remainingMinutes ?? _routeMinutes ?? 0);
+        return mapnavbus.MapNavigationReply(
+          ok: true,
+          message:
+              'You are navigating to $placeName — $miles miles left, ETA $eta.',
+        );
+      }
       _awaitingStartConfirmation = true;
       final placeName = _placeLabel(_selectedPlace!);
       return mapnavbus.MapNavigationReply(
@@ -180,6 +188,7 @@ class MapsScreenState extends State<MapsScreen>
       );
     }
 
+    // New destination query — always clears any active navigation and searches.
     _searchCtrl.text = q;
     await _runTextSearch(q);
 
@@ -278,6 +287,18 @@ class MapsScreenState extends State<MapsScreen>
       return const mapnavbus.MapNavigationReply(
         ok: false,
         message: 'No destination selected.',
+      );
+    }
+    // If already navigating, just report current status — no need to restart.
+    if (_navigating) {
+      final placeName = _placeLabel(_selectedPlace!);
+      final miles =
+          (_remainingMiles ?? _routeMiles ?? 0).toStringAsFixed(1);
+      final eta = _etaLabel(_remainingMinutes ?? _routeMinutes ?? 0);
+      return mapnavbus.MapNavigationReply(
+        ok: true,
+        message:
+            'Already navigating to $placeName — $miles miles left, ETA $eta.',
       );
     }
     _startRoute();
@@ -386,11 +407,22 @@ class MapsScreenState extends State<MapsScreen>
         message: 'Map is not ready yet.',
       );
     }
-    await controller.animateCamera(CameraUpdate.zoomBy(delta.toDouble()));
-    return mapnavbus.MapNavigationReply(
-      ok: true,
-      message: delta > 0 ? 'Zoomed in.' : 'Zoomed out.',
-    );
+    if (delta > 0) {
+      // Zoom in always centers on the driver's current GPS position.
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(_currentCenter, 17),
+      );
+      return const mapnavbus.MapNavigationReply(
+        ok: true,
+        message: 'Zoomed in on your current location.',
+      );
+    } else {
+      await controller.animateCamera(CameraUpdate.zoomBy(delta.toDouble()));
+      return const mapnavbus.MapNavigationReply(
+        ok: true,
+        message: 'Zoomed out.',
+      );
+    }
   }
 
   Future<mapnavbus.MapNavigationReply> _assistantRecenter() async {
@@ -658,7 +690,6 @@ class MapsScreenState extends State<MapsScreen>
       _searching = true;
       _error = null;
       _activeLabel = query;
-      _sheetExpanded = true;
       _clearRouteInternal();
     });
 
@@ -685,7 +716,6 @@ class MapsScreenState extends State<MapsScreen>
       _searching = true;
       _error = null;
       _activeLabel = category;
-      _sheetExpanded = true;
       _clearRouteInternal();
     });
 
@@ -870,7 +900,6 @@ class MapsScreenState extends State<MapsScreen>
 
     setState(() {
       _navigating = true;
-      _sheetExpanded = false;
       _awaitingStartConfirmation = false;
     });
 
@@ -938,36 +967,381 @@ class MapsScreenState extends State<MapsScreen>
   }
 
   String _etaLabel(int minutes) {
-    if (minutes < 60) {
-      return '$minutes min';
-    }
+    if (minutes < 60) return '$minutes min';
     final hours = minutes ~/ 60;
     final mins = minutes % 60;
     if (mins == 0) return '$hours hr';
     return '$hours hr $mins min';
   }
 
+  // ── Bottom panel builders ──────────────────────────────────────────────────
+
+  Widget _buildBottomPanel(BuildContext context, bool isDark) {
+    final panelBg =
+        isDark ? const Color(0xF21C1C1C) : Colors.white;
+    final borderColor =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFE8E8E8);
+    final titleColor = isDark ? Colors.white : Colors.black87;
+    final subtitleColor = isDark ? Colors.white70 : Colors.black54;
+    final bottomPad = MediaQuery.of(context).padding.bottom + 6;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: panelBg,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        border: Border(
+          top: BorderSide(color: borderColor),
+          left: BorderSide(color: borderColor),
+          right: BorderSide(color: borderColor),
+        ),
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 28,
+            offset: const Offset(0, -6),
+            color: Colors.black.withOpacity(isDark ? 0.45 : 0.12),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Drag handle
+          Padding(
+            padding: const EdgeInsets.only(top: 10, bottom: 4),
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: isDark ? Colors.white24 : Colors.black26,
+                borderRadius: BorderRadius.circular(99),
+              ),
+            ),
+          ),
+
+          if (_navigating && _selectedPlace != null)
+            _buildNavPanel(isDark, titleColor, subtitleColor, borderColor, bottomPad)
+          else if (_selectedPlace != null && _routeMiles != null)
+            _buildRoutePanel(isDark, titleColor, subtitleColor, borderColor, bottomPad)
+          else if (_results.isNotEmpty)
+            _buildResultsPanel(isDark, titleColor, subtitleColor, borderColor, bottomPad),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultsPanel(bool isDark, Color titleColor, Color subtitleColor,
+      Color borderColor, double bottomPad) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _activeLabel.isEmpty ? 'Results' : _activeLabel,
+                  style: TextStyle(
+                    color: titleColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF2A2A2A)
+                      : const Color(0xFFF0F0F0),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${_results.length}',
+                  style: TextStyle(
+                    color: subtitleColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 300),
+          child: ListView.separated(
+            shrinkWrap: true,
+            padding: EdgeInsets.fromLTRB(12, 0, 12, bottomPad),
+            itemCount: _results.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemBuilder: (_, i) {
+              final place = _results[i];
+              return _PlaceTile(
+                place: place,
+                isDark: isDark,
+                onTap: () async {
+                  await _focusPlace(place);
+                  await _selectPlace(place);
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRoutePanel(bool isDark, Color titleColor, Color subtitleColor,
+      Color borderColor, double bottomPad) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 8, 16, bottomPad),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _selectedPlace!.name.isEmpty
+                ? 'Destination'
+                : _selectedPlace!.name,
+            style: TextStyle(
+              color: titleColor,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          if (_selectedPlace!.address.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              _selectedPlace!.address,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: subtitleColor,
+                fontSize: 13,
+                height: 1.3,
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _RouteStatChip(
+                label: '${_routeMiles!.toStringAsFixed(1)} mi',
+                isDark: isDark,
+                icon: Icons.straighten_rounded,
+              ),
+              const SizedBox(width: 8),
+              _RouteStatChip(
+                label: _etaLabel(_routeMinutes!),
+                isDark: isDark,
+                icon: Icons.access_time_rounded,
+              ),
+              const SizedBox(width: 8),
+              _RouteStatChip(
+                label: _mapTypeLabel(),
+                isDark: isDark,
+                icon: Icons.map_outlined,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: titleColor,
+                    side: BorderSide(color: borderColor),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: _clearRoute,
+                  child: const Text('Clear',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: _startRoute,
+                  child: const Text('Start',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 16)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavPanel(bool isDark, Color titleColor, Color subtitleColor,
+      Color borderColor, double bottomPad) {
+    final currentStep =
+        _navSteps.isNotEmpty ? _navSteps[_currentStepIndex] : null;
+    final softBg =
+        isDark ? const Color(0xFF242424) : const Color(0xFFF5F5F5);
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16, 8, 16, bottomPad),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(Icons.navigation_rounded,
+                    color: Colors.white, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _selectedPlace!.name.isEmpty
+                          ? 'Destination'
+                          : _selectedPlace!.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${(_remainingMiles ?? _routeMiles ?? 0).toStringAsFixed(1)} mi · ETA ${_etaLabel(_remainingMinutes ?? _routeMinutes ?? 1)}',
+                      style: TextStyle(
+                        color: subtitleColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: _clearRoute,
+                child: const Text(
+                  'End',
+                  style: TextStyle(
+                      color: Colors.red, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          if (currentStep != null) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: softBg,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.turn_right_rounded,
+                        color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      currentStep.instruction,
+                      style: TextStyle(
+                        color: titleColor,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    children: [
+                      Text(
+                        _metersToMiles(currentStep.distanceMeters)
+                            .toStringAsFixed(1),
+                        style: TextStyle(
+                          color: titleColor,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                        ),
+                      ),
+                      Text('mi',
+                          style:
+                              TextStyle(color: subtitleColor, fontSize: 11)),
+                    ],
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: _nextStep,
+                    icon: Icon(Icons.skip_next_rounded,
+                        color: subtitleColor, size: 22),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
     final panelBg =
-        isDark ? const Color(0xE61A1A1A) : Colors.white.withOpacity(0.96);
+        isDark ? const Color(0xF21C1C1C) : Colors.white;
     final borderColor =
-        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFE8E8E8);
     final titleColor = isDark ? Colors.white : Colors.black87;
-    final subtitleColor = isDark ? Colors.white70 : Colors.black54;
-    final hintColor = isDark ? Colors.white54 : Colors.black54;
-    final iconColor = isDark ? Colors.white : Colors.black87;
 
     final currentStep =
         _navSteps.isNotEmpty ? _navSteps[_currentStepIndex] : null;
 
+    // Panel is visible when results exist OR a place is selected
+    final hasBottomPanel = _results.isNotEmpty || _selectedPlace != null;
+
     return Scaffold(
       body: Stack(
         children: [
+          // ── Full-screen map ──────────────────────────────────────────
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: _currentCenter,
@@ -992,451 +1366,271 @@ class MapsScreenState extends State<MapsScreen>
               }
             },
           ),
+
+          // ── Loading overlay ──────────────────────────────────────────
           if (_loadingLocation || _searching || _routing)
             Container(
-              color: Colors.black.withOpacity(0.18),
+              color: Colors.black.withOpacity(0.22),
               child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 12),
-                    Text(
-                      _loadingLocation
-                          ? 'Getting location...'
-                          : _searching
-                              ? 'Searching...'
-                              : 'Routing...',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 28, vertical: 22),
+                  decoration: BoxDecoration(
+                    color: panelBg,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: borderColor),
+                    boxShadow: const [
+                      BoxShadow(
+                          blurRadius: 24,
+                          color: Color(0x30000000),
+                          offset: Offset(0, 8))
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(strokeWidth: 2),
+                      const SizedBox(height: 14),
+                      Text(
+                        _loadingLocation
+                            ? 'Getting location...'
+                            : _searching
+                                ? 'Searching...'
+                                : 'Routing...',
+                        style: TextStyle(
+                          color: titleColor,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Column(
-                children: [
-                  if (_navigating && currentStep != null) ...[
+
+          // ── Top overlay: nav instruction + search bar + chips ────────
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Navigation instruction card (active only when navigating)
+                    if (_navigating && currentStep != null) ...[
+                      _NavInstructionCard(
+                        isDark: isDark,
+                        instruction: currentStep.instruction,
+                        distanceMiles:
+                            _metersToMiles(currentStep.distanceMeters),
+                        onNext: _nextStep,
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+
+                    // Search bar
                     Material(
-                      elevation: isDark ? 0 : 8,
-                      borderRadius: BorderRadius.circular(20),
+                      elevation: isDark ? 0 : 10,
+                      shadowColor: const Color(0x22000000),
+                      borderRadius: BorderRadius.circular(16),
                       color: panelBg,
                       child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
+                        height: 52,
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: BorderRadius.circular(16),
                           border: Border.all(color: borderColor),
                         ),
                         child: Row(
                           children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Icon(
-                                Icons.turn_right,
-                                color: Colors.white,
-                              ),
+                            const SizedBox(width: 14),
+                            Icon(
+                              Icons.search_rounded,
+                              color:
+                                  isDark ? Colors.white60 : Colors.black45,
+                              size: 22,
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 10),
                             Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    currentStep.instruction,
-                                    style: TextStyle(
-                                      color: titleColor,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                              child: TextField(
+                                controller: _searchCtrl,
+                                style: TextStyle(
+                                  color: titleColor,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: 'Search places...',
+                                  hintStyle: TextStyle(
+                                    color: isDark
+                                        ? Colors.white38
+                                        : Colors.black38,
+                                    fontSize: 15,
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${_metersToMiles(currentStep.distanceMeters).toStringAsFixed(1)} mi',
-                                    style: TextStyle(
-                                      color: subtitleColor,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                ),
+                                onSubmitted: (_) => _runSearch(),
                               ),
                             ),
+                            if (_searchCtrl.text.isNotEmpty)
+                              GestureDetector(
+                                onTap: () {
+                                  _searchCtrl.clear();
+                                  setState(() {});
+                                },
+                                child: Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: Icon(Icons.close_rounded,
+                                      color: isDark
+                                          ? Colors.white38
+                                          : Colors.black38,
+                                      size: 18),
+                                ),
+                              ),
+                            GestureDetector(
+                              onTap: _runSearch,
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 8),
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(Icons.arrow_forward_rounded,
+                                    color: Colors.white, size: 18),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // Category chips
+                    SizedBox(
+                      height: 36,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _quickCategories.length,
+                        separatorBuilder: (_, __) =>
                             const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: _nextStep,
-                              icon: Icon(
-                                Icons.arrow_forward,
-                                color: iconColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                  Material(
-                    elevation: isDark ? 0 : 8,
-                    borderRadius: BorderRadius.circular(18),
-                    color: panelBg,
-                    child: Container(
-                      height: 58,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: borderColor),
-                      ),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 12),
-                          Icon(Icons.search, color: iconColor),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: TextField(
-                              controller: _searchCtrl,
-                              style: TextStyle(
-                                color: titleColor,
-                                fontSize: 16,
-                              ),
-                              decoration: InputDecoration(
-                                hintText: 'Search places...',
-                                hintStyle: TextStyle(
-                                  color: hintColor,
-                                  fontSize: 16,
-                                ),
-                                border: InputBorder.none,
-                              ),
-                              onSubmitted: (_) => _runSearch(),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: _runSearch,
-                            icon: Icon(Icons.arrow_forward, color: iconColor),
-                          ),
-                          const SizedBox(width: 4),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 42,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _quickCategories.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final item = _quickCategories[index];
-                        return _CategoryChip(
-                          label: item.label,
-                          icon: item.icon,
-                          onTap: () => _runNearbySearch(item.label),
-                        );
-                      },
-                    ),
-                  ),
-                  const Spacer(),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _MapActionButton(
-                          isDark: isDark,
-                          icon: Icons.my_location,
-                          onTap: () async {
-                            await _refreshCurrentLocation(moveCamera: true);
-                          },
-                        ),
-                        const SizedBox(height: 10),
-                        _MapActionButton(
-                          isDark: isDark,
-                          icon: Icons.layers_outlined,
-                          onTap: _toggleMapType,
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Material(
-                      elevation: isDark ? 0 : 6,
-                      borderRadius: BorderRadius.circular(16),
-                      color: panelBg,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: borderColor),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(16),
-                          onTap: () {
-                            showDialog<void>(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('Maps error'),
-                                content: SingleChildScrollView(
-                                  child: SelectableText(_error!),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.of(ctx).pop(),
-                                    child: const Text('Close'),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                          child: Text(
-                            _error!,
-                            maxLines: 4,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: isDark
-                                  ? Colors.red.shade300
-                                  : Colors.red.shade700,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (_selectedPlace != null &&
-                      _routeMiles != null &&
-                      _routeMinutes != null) ...[
-                    const SizedBox(height: 12),
-                    Material(
-                      elevation: isDark ? 0 : 8,
-                      borderRadius: BorderRadius.circular(20),
-                      color: panelBg,
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: borderColor),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _selectedPlace!.name.isEmpty
-                                  ? 'Destination'
-                                  : _selectedPlace!.name,
-                              style: TextStyle(
-                                color: titleColor,
-                                fontSize: 17,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _selectedPlace!.address,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: subtitleColor,
-                                fontSize: 12,
-                                height: 1.3,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                _RouteStatChip(
-                                  label:
-                                      '${(_navigating ? (_remainingMiles ?? _routeMiles!) : _routeMiles!).toStringAsFixed(1)} mi',
-                                  isDark: isDark,
-                                ),
-                                const SizedBox(width: 8),
-                                _RouteStatChip(
-                                  label: _etaLabel(
-                                    _navigating
-                                        ? (_remainingMinutes ?? _routeMinutes!)
-                                        : _routeMinutes!,
-                                  ),
-                                  isDark: isDark,
-                                ),
-                                const SizedBox(width: 8),
-                                _RouteStatChip(
-                                  label: _navigating
-                                      ? 'On Route'
-                                      : _mapTypeLabel(),
-                                  isDark: isDark,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: OutlinedButton(
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: titleColor,
-                                      side: BorderSide(color: borderColor),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 14,
-                                      ),
-                                    ),
-                                    onPressed: _clearRoute,
-                                    child: const Text('Clear'),
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: FilledButton(
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: Colors.black,
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 14,
-                                      ),
-                                    ),
-                                    onPressed:
-                                        _navigating ? _nextStep : _startRoute,
-                                    child: Text(
-                                      _navigating ? 'Next Step' : 'Start',
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (_results.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _sheetExpanded = !_sheetExpanded;
-                          });
+                        itemBuilder: (_, i) {
+                          final item = _quickCategories[i];
+                          return _CategoryChip(
+                            label: item.label,
+                            icon: item.icon,
+                            isDark: isDark,
+                            onTap: () => _runNearbySearch(item.label),
+                          );
                         },
-                        child: Material(
-                          elevation: isDark ? 0 : 6,
-                          borderRadius: BorderRadius.circular(14),
-                          color: panelBg,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: borderColor),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _activeLabel.isEmpty
-                                      ? 'Results'
-                                      : _activeLabel,
-                                  style: TextStyle(
-                                    color: titleColor,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '${_results.length}',
-                                  style: TextStyle(
-                                    color: subtitleColor,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Icon(
-                                  _sheetExpanded
-                                      ? Icons.expand_more
-                                      : Icons.expand_less,
-                                  color: subtitleColor,
-                                  size: 18,
+                      ),
+                    ),
+
+                    // Error banner
+                    if (_error != null) ...[
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        onTap: () {
+                          showDialog<void>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Maps error'),
+                              content: SingleChildScrollView(
+                                child: SelectableText(_error!),
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(),
+                                  child: const Text('Close'),
                                 ),
                               ],
                             ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (_sheetExpanded)
-                      Material(
-                        elevation: isDark ? 0 : 8,
-                        borderRadius: BorderRadius.circular(18),
-                        color: panelBg,
+                          );
+                        },
                         child: Container(
                           width: double.infinity,
-                          constraints: BoxConstraints(
-                            maxHeight: _selectedPlace != null ? 140 : 240,
-                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: borderColor),
+                            color: panelBg,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                                color: Colors.red.withOpacity(0.4)),
                           ),
-                          child: ListView.separated(
-                            padding: const EdgeInsets.all(10),
-                            itemCount: _results.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 8),
-                            itemBuilder: (_, i) {
-                              final place = _results[i];
-                              return _PlaceTile(
-                                place: place,
-                                isDark: isDark,
-                                onTap: () async {
-                                  await _focusPlace(place);
-                                  await _selectPlace(place);
-                                },
-                              );
-                            },
+                          child: Row(
+                            children: [
+                              Icon(Icons.error_outline_rounded,
+                                  color: Colors.red.shade400, size: 18),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _error!,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.red.shade400,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
+                    ],
                   ],
-                  SizedBox(height: _selectedPlace != null ? 100 : 90),
-                ],
+                ),
               ),
             ),
           ),
-          if (_navigating && _selectedPlace != null)
+
+          // ── Right FABs — animate up when bottom panel appears ────────
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            right: 12,
+            bottom: hasBottomPanel ? 290 : 20,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _MapActionButton(
+                  isDark: isDark,
+                  icon: Icons.my_location_rounded,
+                  onTap: () => _refreshCurrentLocation(moveCamera: true),
+                ),
+                const SizedBox(height: 10),
+                _MapActionButton(
+                  isDark: isDark,
+                  icon: Icons.layers_rounded,
+                  onTap: _toggleMapType,
+                ),
+              ],
+            ),
+          ),
+
+          // ── Bottom panel ─────────────────────────────────────────────
+          if (hasBottomPanel)
             Positioned(
-              left: 12,
-              right: 12,
-              bottom: 86,
-              child: _BottomNavStatusCard(
-                isDark: Theme.of(context).brightness == Brightness.dark,
-                placeName: _selectedPlace!.name.isEmpty
-                    ? 'Destination'
-                    : _selectedPlace!.name,
-                etaLabel: _etaLabel(_remainingMinutes ?? _routeMinutes ?? 1),
-                milesLabel:
-                    '${(_remainingMiles ?? _routeMiles ?? 0).toStringAsFixed(1)} mi left',
-              ),
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildBottomPanel(context, isDark),
             ),
         ],
       ),
     );
   }
 }
+
+// ── Supporting data ────────────────────────────────────────────────────────────
 
 class _QuickMapCategory {
   final String label;
@@ -1445,48 +1639,139 @@ class _QuickMapCategory {
   const _QuickMapCategory(this.label, this.icon);
 }
 
+// ── Navigation instruction card (top, when navigating) ────────────────────────
+
+class _NavInstructionCard extends StatelessWidget {
+  const _NavInstructionCard({
+    required this.isDark,
+    required this.instruction,
+    required this.distanceMiles,
+    required this.onNext,
+  });
+
+  final bool isDark;
+  final String instruction;
+  final double distanceMiles;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A2E),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            blurRadius: 20,
+            offset: Offset(0, 6),
+            color: Color(0x40000000),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.turn_right_rounded,
+                    color: Colors.white, size: 26),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                distanceMiles.toStringAsFixed(1),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              Text(
+                'mi',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.55),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Text(
+              instruction,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                height: 1.35,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: onNext,
+            icon: Icon(Icons.skip_next_rounded,
+                color: Colors.white.withOpacity(0.6), size: 24),
+            padding: EdgeInsets.zero,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Category chip ──────────────────────────────────────────────────────────────
+
 class _CategoryChip extends StatelessWidget {
   const _CategoryChip({
     required this.label,
     required this.icon,
+    required this.isDark,
     required this.onTap,
   });
 
   final String label;
   final IconData icon;
+  final bool isDark;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xF01C1C1C) : Colors.white;
+    final border =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFE8E8E8);
+    final textColor = isDark ? Colors.white : Colors.black87;
 
     return Material(
-      color: isDark ? const Color(0xE61A1A1A) : Colors.white.withOpacity(0.96),
-      elevation: isDark ? 0 : 5,
+      color: bg,
+      elevation: isDark ? 0 : 6,
+      shadowColor: const Color(0x1A000000),
       borderRadius: BorderRadius.circular(999),
       child: InkWell(
         borderRadius: BorderRadius.circular(999),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
-            ),
+            border: Border.all(color: border),
           ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                size: 16,
-                color: isDark ? Colors.white : Colors.black87,
-              ),
-              const SizedBox(width: 8),
+              Icon(icon, size: 15, color: textColor),
+              const SizedBox(width: 7),
               Text(
                 label,
                 style: TextStyle(
-                  color: isDark ? Colors.white : Colors.black87,
+                  color: textColor,
                   fontWeight: FontWeight.w700,
                   fontSize: 13,
                 ),
@@ -1498,6 +1783,8 @@ class _CategoryChip extends StatelessWidget {
     );
   }
 }
+
+// ── Map action button (FAB) ────────────────────────────────────────────────────
 
 class _MapActionButton extends StatelessWidget {
   const _MapActionButton({
@@ -1512,31 +1799,37 @@ class _MapActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bg = isDark ? const Color(0xF01C1C1C) : Colors.white;
+    final border =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFE8E8E8);
+
     return Material(
-      color: isDark ? const Color(0xE61A1A1A) : Colors.white.withOpacity(0.96),
-      elevation: isDark ? 0 : 6,
-      borderRadius: BorderRadius.circular(16),
+      color: bg,
+      elevation: isDark ? 0 : 8,
+      shadowColor: const Color(0x1A000000),
+      borderRadius: BorderRadius.circular(14),
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
         child: Container(
-          width: 48,
-          height: 48,
+          width: 46,
+          height: 46,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
-            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: border),
           ),
           child: Icon(
             icon,
             color: isDark ? Colors.white : Colors.black87,
+            size: 22,
           ),
         ),
       ),
     );
   }
 }
+
+// ── Place result tile ──────────────────────────────────────────────────────────
 
 class _PlaceTile extends StatelessWidget {
   const _PlaceTile({
@@ -1551,8 +1844,10 @@ class _PlaceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final tileBg = isDark ? const Color(0xFF1A1A1A) : const Color(0xFFF7F7F7);
-    final border = isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
+    final tileBg =
+        isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
+    final border =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
     final titleColor = isDark ? Colors.white : Colors.black87;
     final subtitleColor = isDark ? Colors.white70 : Colors.black54;
 
@@ -1560,7 +1855,7 @@ class _PlaceTile extends StatelessWidget {
         ? ''
         : place.userRatingCount == null
             ? '${place.rating!.toStringAsFixed(1)}★'
-            : '${place.rating!.toStringAsFixed(1)}★ (${place.userRatingCount})';
+            : '${place.rating!.toStringAsFixed(1)}★  (${place.userRatingCount})';
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
@@ -1575,15 +1870,16 @@ class _PlaceTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
                 color: Colors.black,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.place_outlined, color: Colors.white),
+              child: const Icon(Icons.place_outlined,
+                  color: Colors.white, size: 20),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1595,27 +1891,27 @@ class _PlaceTile extends StatelessWidget {
                     style: TextStyle(
                       color: titleColor,
                       fontWeight: FontWeight.w800,
+                      fontSize: 14,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Text(
                     place.address,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: subtitleColor,
                       fontSize: 12,
-                      height: 1.3,
                     ),
                   ),
                   if (ratingText.isNotEmpty) ...[
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 3),
                     Text(
                       ratingText,
                       style: TextStyle(
                         color: subtitleColor,
                         fontSize: 11,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
@@ -1623,119 +1919,57 @@ class _PlaceTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Icon(
-              Icons.chevron_right,
-              color: subtitleColor,
-            ),
+            Icon(Icons.arrow_forward_ios_rounded,
+                color: subtitleColor, size: 14),
           ],
         ),
       ),
     );
   }
 }
+
+// ── Route stat chip ────────────────────────────────────────────────────────────
 
 class _RouteStatChip extends StatelessWidget {
   const _RouteStatChip({
     required this.label,
     required this.isDark,
+    required this.icon,
   });
 
   final String label;
   final bool isDark;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
+    final bg =
+        isDark ? const Color(0xFF242424) : const Color(0xFFF3F3F3);
+    final border =
+        isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA);
+    final textColor = isDark ? Colors.white : Colors.black87;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF222222) : const Color(0xFFF5F5F5),
+        color: bg,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
-        ),
+        border: Border.all(color: border),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: isDark ? Colors.white : Colors.black87,
-          fontWeight: FontWeight.w700,
-          fontSize: 12,
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomNavStatusCard extends StatelessWidget {
-  const _BottomNavStatusCard({
-    required this.isDark,
-    required this.placeName,
-    required this.etaLabel,
-    required this.milesLabel,
-  });
-
-  final bool isDark;
-  final String placeName;
-  final String etaLabel;
-  final String milesLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: isDark ? 0 : 10,
-      borderRadius: BorderRadius.circular(18),
-      color: isDark ? const Color(0xEE1A1A1A) : Colors.white.withOpacity(0.97),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isDark ? const Color(0xFF2D2D2D) : const Color(0xFFEAEAEA),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: textColor),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              color: textColor,
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
           ),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.navigation_outlined,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    placeName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: isDark ? Colors.white : Colors.black87,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '$milesLabel • ETA $etaLabel',
-                    style: TextStyle(
-                      color: isDark ? Colors.white70 : Colors.black54,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }

@@ -18,48 +18,56 @@ class _LogsScreenState extends State<LogsScreen>
   static const List<_LogFolder> _allFolders = [
     _LogFolder(
       icon: Icons.local_gas_station,
+      accentColor: Color(0xFFFF9500),
       title: 'Fuel Log',
       subtitle: 'Fuel stops, gallons, cost, and MPG notes',
       category: 'fuel',
     ),
     _LogFolder(
       icon: Icons.local_shipping_outlined,
+      accentColor: Color(0xFF007AFF),
       title: 'Trip Log',
       subtitle: 'Loads, miles, routes, pickup and drop-off details',
       category: 'trip',
     ),
     _LogFolder(
       icon: Icons.build_outlined,
+      accentColor: Color(0xFFFF3B30),
       title: 'Maintenance Log',
       subtitle: 'Repairs, oil changes, tires, and service history',
       category: 'maintenance',
     ),
     _LogFolder(
       icon: Icons.receipt_long_outlined,
+      accentColor: Color(0xFF34C759),
       title: 'Receipt Folder',
       subtitle: 'Fuel, food, toll, repair, and scale receipts',
       category: 'receipts',
     ),
     _LogFolder(
       icon: Icons.note_alt_outlined,
+      accentColor: Color(0xFFBF5AF2),
       title: 'Driver Notes',
       subtitle: 'Reminders, route notes, and personal notes',
       category: 'notes',
     ),
     _LogFolder(
       icon: Icons.warning_amber_rounded,
+      accentColor: Color(0xFFFF6B00),
       title: 'Incident Log',
       subtitle: 'Breakdowns, delays, damage, and roadside events',
       category: 'incidents',
     ),
     _LogFolder(
       icon: Icons.assignment_outlined,
+      accentColor: Color(0xFF5AC8FA),
       title: 'Load Documents',
       subtitle: 'Rate cons, BOLs, confirmations, and paperwork',
       category: 'documents',
     ),
     _LogFolder(
       icon: Icons.health_and_safety_outlined,
+      accentColor: Color(0xFF30D158),
       title: 'Compliance',
       subtitle: 'DOT, permits, insurance, registration, and renewals',
       category: 'compliance',
@@ -77,7 +85,7 @@ class _LogsScreenState extends State<LogsScreen>
     super.initState();
     _enterCtrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 700),
     );
     _loadLogs();
   }
@@ -117,9 +125,8 @@ class _LogsScreenState extends State<LogsScreen>
     }).toList();
   }
 
-  int _countForFolder(String category) {
-    return _entries.where((e) => e.folderId == category).length;
-  }
+  int _countForFolder(String category) =>
+      _entries.where((e) => e.folderId == category).length;
 
   int get _totalItems => _entries.length;
 
@@ -127,6 +134,13 @@ class _LogsScreenState extends State<LogsScreen>
     final copy = [..._entries];
     copy.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return copy.take(3).toList();
+  }
+
+  Color _accentForCategory(String category) {
+    for (final f in _allFolders) {
+      if (f.category == category) return f.accentColor;
+    }
+    return Colors.black;
   }
 
   String _formatRecent(DateTime dt) {
@@ -137,6 +151,7 @@ class _LogsScreenState extends State<LogsScreen>
   }
 
   Future<void> _openFolder(_LogFolder folder) async {
+    HapticFeedback.lightImpact();
     final changed = await Navigator.of(context).push<bool>(
       PageRouteBuilder(
         pageBuilder: (_, animation, secondaryAnimation) =>
@@ -144,6 +159,8 @@ class _LogsScreenState extends State<LogsScreen>
           folderId: folder.category,
           folderTitle: folder.title,
           folderSubtitle: folder.subtitle,
+          folderIcon: folder.icon,
+          accentColor: folder.accentColor,
           heroTag: 'folder_icon_${folder.category}',
         ),
         transitionsBuilder: (_, animation, __, child) {
@@ -180,14 +197,10 @@ class _LogsScreenState extends State<LogsScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF4F4F4);
+    final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF2F2F7);
     final surface = isDark ? const Color(0xFF181818) : Colors.white;
-    final softSurface =
-        isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7);
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
     final titleColor = isDark ? Colors.white : Colors.black87;
-    final subtitleColor = isDark ? Colors.white70 : Colors.black54;
 
     final folders = _filteredFolders;
 
@@ -208,21 +221,26 @@ class _LogsScreenState extends State<LogsScreen>
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
-            child: Material(
-              color: surface,
-              borderRadius: BorderRadius.circular(14),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: _showAddHint,
-                child: Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: border),
-                  ),
-                  child: Icon(Icons.add, color: titleColor),
+            child: GestureDetector(
+              onTap: _showAddHint,
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: border),
+                  boxShadow: isDark
+                      ? const []
+                      : const [
+                          BoxShadow(
+                            blurRadius: 8,
+                            offset: Offset(0, 2),
+                            color: Color(0x14000000),
+                          ),
+                        ],
                 ),
+                child: Icon(Icons.add_rounded, color: titleColor, size: 22),
               ),
             ),
           ),
@@ -240,7 +258,7 @@ class _LogsScreenState extends State<LogsScreen>
                     Text(
                       'Loading logs...',
                       style: TextStyle(
-                        color: subtitleColor,
+                        color: isDark ? Colors.white54 : Colors.black38,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -250,185 +268,105 @@ class _LogsScreenState extends State<LogsScreen>
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ── Stats + Search card ──────────────────────────────
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                    child: Material(
-                      color: surface,
-                      elevation: isDark ? 0 : 4,
-                      shadowColor: const Color(0x12000000),
-                      borderRadius: BorderRadius.circular(22),
-                      clipBehavior: Clip.antiAlias,
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(color: border),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _StatCard(
-                                    label: 'Folders',
-                                    value: '${_allFolders.length}',
-                                    isDark: isDark,
-                                    icon: Icons.folder_outlined,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: _StatCard(
-                                    label: 'Saved Items',
-                                    value: '$_totalItems',
-                                    isDark: isDark,
-                                    icon: Icons.description_outlined,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: _StatCard(
-                                    label: 'Recent',
-                                    value: _recentEntries.isEmpty
-                                        ? '0'
-                                        : '${_recentEntries.length}',
-                                    isDark: isDark,
-                                    icon: Icons.history_outlined,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 14),
-                            Container(
-                              height: 52,
-                              decoration: BoxDecoration(
-                                color: softSurface,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: border),
-                              ),
-                              child: Row(
-                                children: [
-                                  const SizedBox(width: 14),
-                                  Icon(Icons.search,
-                                      color: subtitleColor, size: 20),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _searchCtrl,
-                                      onChanged: (_) => setState(() {}),
-                                      style: TextStyle(
-                                        color: titleColor,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                      decoration: InputDecoration(
-                                        hintText:
-                                            'Search logs, receipts, notes...',
-                                        hintStyle: TextStyle(
-                                          color: subtitleColor,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                        border: InputBorder.none,
-                                        isDense: true,
-                                      ),
-                                    ),
-                                  ),
-                                  if (_searchCtrl.text.isNotEmpty)
-                                    IconButton(
-                                      onPressed: () {
-                                        _searchCtrl.clear();
-                                        setState(() {});
-                                      },
-                                      icon: Icon(Icons.close,
-                                          color: subtitleColor, size: 18),
-                                      padding: EdgeInsets.zero,
-                                    ),
-                                  const SizedBox(width: 6),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                  // ── Gradient hero card ─────────────────────────────────
+                  _HeroStatsCard(
+                    totalFolders: _allFolders.length,
+                    totalItems: _totalItems,
+                    recentCount: _recentEntries.length,
+                    searchCtrl: _searchCtrl,
+                    onSearch: () => setState(() {}),
+                    onClear: () {
+                      _searchCtrl.clear();
+                      setState(() {});
+                    },
                   ),
 
-                  // ── Filter chips ─────────────────────────────────────
-                  const SizedBox(height: 12),
+                  // ── Filter chips ───────────────────────────────────────
+                  const SizedBox(height: 14),
                   SizedBox(
-                    height: 38,
+                    height: 36,
                     child: ListView(
                       scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
                       children: [
                         _FilterPill(
                           label: 'All',
                           selected: _selectedFilter == 'all',
-                          onTap: () =>
-                              setState(() => _selectedFilter = 'all'),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _selectedFilter = 'all');
+                          },
                           isDark: isDark,
                         ),
                         _FilterPill(
                           label: 'Fuel',
                           selected: _selectedFilter == 'fuel',
-                          onTap: () =>
-                              setState(() => _selectedFilter = 'fuel'),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _selectedFilter = 'fuel');
+                          },
                           isDark: isDark,
                         ),
                         _FilterPill(
                           label: 'Trip',
                           selected: _selectedFilter == 'trip',
-                          onTap: () =>
-                              setState(() => _selectedFilter = 'trip'),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _selectedFilter = 'trip');
+                          },
                           isDark: isDark,
                         ),
                         _FilterPill(
                           label: 'Maintenance',
                           selected: _selectedFilter == 'maintenance',
-                          onTap: () =>
-                              setState(() => _selectedFilter = 'maintenance'),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _selectedFilter = 'maintenance');
+                          },
                           isDark: isDark,
                         ),
                         _FilterPill(
                           label: 'Receipts',
                           selected: _selectedFilter == 'receipts',
-                          onTap: () =>
-                              setState(() => _selectedFilter = 'receipts'),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _selectedFilter = 'receipts');
+                          },
                           isDark: isDark,
                         ),
                         _FilterPill(
                           label: 'Notes',
                           selected: _selectedFilter == 'notes',
-                          onTap: () =>
-                              setState(() => _selectedFilter = 'notes'),
+                          onTap: () {
+                            HapticFeedback.selectionClick();
+                            setState(() => _selectedFilter = 'notes');
+                          },
                           isDark: isDark,
                         ),
                       ],
                     ),
                   ),
 
-                  // ── Scrollable content ───────────────────────────────
-                  const SizedBox(height: 12),
+                  // ── Scrollable list ────────────────────────────────────
+                  const SizedBox(height: 14),
                   Expanded(
                     child: ListView(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                       children: [
-                        // Section header
-                        _SectionHeader(
-                          label: 'File Cabinet',
+                        _SectionLabel(
+                          label: 'FILE CABINET',
                           trailing: '${folders.length} of ${_allFolders.length}',
                           isDark: isDark,
                         ),
                         const SizedBox(height: 10),
 
-                        // Folders
                         if (folders.isEmpty)
                           _EmptyState(
                             isDark: isDark,
                             icon: Icons.folder_open_outlined,
                             message: 'No matching logs found',
-                            subMessage: 'Try a different filter or search term',
+                            subMessage:
+                                'Try a different filter or search term',
                           )
                         else
                           ...folders.asMap().entries.map((entry) {
@@ -450,12 +388,9 @@ class _LogsScreenState extends State<LogsScreen>
                             );
                           }),
 
-                        const SizedBox(height: 8),
-
-                        // Recent activity
-                        _SectionHeader(
-                          label: 'Recent Activity',
-                          trailing: null,
+                        const SizedBox(height: 10),
+                        _SectionLabel(
+                          label: 'RECENT ACTIVITY',
                           isDark: isDark,
                         ),
                         const SizedBox(height: 10),
@@ -480,8 +415,10 @@ class _LogsScreenState extends State<LogsScreen>
                                 child: _RecentActivityTile(
                                   title: log.title,
                                   subtitle:
-                                      '${log.note} • ${_formatRecent(log.createdAt)}',
+                                      '${log.note} · ${_formatRecent(log.createdAt)}',
                                   isDark: isDark,
+                                  accentColor:
+                                      _accentForCategory(log.folderId),
                                 ),
                               ),
                             );
@@ -496,27 +433,262 @@ class _LogsScreenState extends State<LogsScreen>
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Data model
-// ─────────────────────────────────────────────────────────────
+// ── Data model ─────────────────────────────────────────────────────────────────
 
 class _LogFolder {
   final IconData icon;
+  final Color accentColor;
   final String title;
   final String subtitle;
   final String category;
 
   const _LogFolder({
     required this.icon,
+    required this.accentColor,
     required this.title,
     required this.subtitle,
     required this.category,
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// Stagger animation wrapper
-// ─────────────────────────────────────────────────────────────
+// ── Hero stats card ────────────────────────────────────────────────────────────
+
+class _HeroStatsCard extends StatelessWidget {
+  const _HeroStatsCard({
+    required this.totalFolders,
+    required this.totalItems,
+    required this.recentCount,
+    required this.searchCtrl,
+    required this.onSearch,
+    required this.onClear,
+  });
+
+  final int totalFolders;
+  final int totalItems;
+  final int recentCount;
+  final TextEditingController searchCtrl;
+  final VoidCallback onSearch;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF1C1C2E), Color(0xFF16213E)],
+          ),
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: const [
+            BoxShadow(
+              blurRadius: 24,
+              offset: Offset(0, 8),
+              color: Color(0x38000000),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'File Cabinet',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Your driving records',
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.50),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      _HeroStat(
+                        label: 'Folders',
+                        value: '$totalFolders',
+                        icon: Icons.folder_outlined,
+                      ),
+                      const SizedBox(width: 18),
+                      _HeroStat(
+                        label: 'Items',
+                        value: '$totalItems',
+                        icon: Icons.description_outlined,
+                      ),
+                      const SizedBox(width: 18),
+                      _HeroStat(
+                        label: 'Recent',
+                        value: '$recentCount',
+                        icon: Icons.history_outlined,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Container(
+                height: 46,
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(14),
+                  border:
+                      Border.all(color: Colors.white.withOpacity(0.13)),
+                ),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 14),
+                    Icon(
+                      Icons.search_rounded,
+                      color: Colors.white.withOpacity(0.50),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        controller: searchCtrl,
+                        onChanged: (_) => onSearch(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Search logs, receipts, notes...',
+                          hintStyle: TextStyle(
+                            color: Colors.white.withOpacity(0.35),
+                            fontWeight: FontWeight.w500,
+                          ),
+                          border: InputBorder.none,
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    if (searchCtrl.text.isNotEmpty)
+                      IconButton(
+                        onPressed: onClear,
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: Colors.white.withOpacity(0.55),
+                          size: 18,
+                        ),
+                        padding: EdgeInsets.zero,
+                      ),
+                    const SizedBox(width: 6),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeroStat extends StatelessWidget {
+  const _HeroStat({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.45),
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Section label ──────────────────────────────────────────────────────────────
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel({
+    required this.label,
+    required this.isDark,
+    this.trailing,
+  });
+
+  final String label;
+  final bool isDark;
+  final String? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isDark ? Colors.white38 : Colors.black38;
+
+    return Row(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+          ),
+        ),
+        if (trailing != null) ...[
+          const Spacer(),
+          Text(
+            trailing!,
+            style: TextStyle(
+              color: color,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ── Stagger animation wrapper ──────────────────────────────────────────────────
 
 class _StaggerAnim extends StatelessWidget {
   const _StaggerAnim({
@@ -532,19 +704,19 @@ class _StaggerAnim extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final start = (index * 0.06).clamp(0.0, 0.7);
-    final end = (start + 0.4).clamp(0.0, 1.0);
+    final start = (index * 0.07).clamp(0.0, 0.65);
+    final end = (start + 0.45).clamp(0.0, 1.0);
 
     final anim = CurvedAnimation(
       parent: controller,
-      curve: Interval(start, end, curve: Curves.easeOutCubic),
+      curve: Interval(start, end, curve: Curves.easeOutQuart),
     );
 
     return FadeTransition(
       opacity: anim,
       child: SlideTransition(
         position: Tween<Offset>(
-          begin: const Offset(0, 0.06),
+          begin: const Offset(0, 0.10),
           end: Offset.zero,
         ).animate(anim),
         child: child,
@@ -553,56 +725,7 @@ class _StaggerAnim extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Section header
-// ─────────────────────────────────────────────────────────────
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({
-    required this.label,
-    required this.isDark,
-    this.trailing,
-  });
-
-  final String label;
-  final bool isDark;
-  final String? trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white54 : Colors.black38;
-
-    return Row(
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: textColor,
-            fontSize: 16,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 0.1,
-          ),
-        ),
-        if (trailing != null) ...[
-          const Spacer(),
-          Text(
-            trailing!,
-            style: TextStyle(
-              color: subtextColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Empty state
-// ─────────────────────────────────────────────────────────────
+// ── Empty state ────────────────────────────────────────────────────────────────
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState({
@@ -640,9 +763,8 @@ class _EmptyState extends StatelessWidget {
               width: 60,
               height: 60,
               decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF222222)
-                    : const Color(0xFFF0F0F0),
+                color:
+                    isDark ? const Color(0xFF222222) : const Color(0xFFF0F0F0),
                 shape: BoxShape.circle,
               ),
               child: Icon(icon, size: 28, color: subtextColor),
@@ -660,10 +782,7 @@ class _EmptyState extends StatelessWidget {
             Text(
               subMessage,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: subtextColor,
-                fontSize: 13,
-              ),
+              style: TextStyle(color: subtextColor, fontSize: 13),
             ),
           ],
         ),
@@ -672,71 +791,7 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Stat card
-// ─────────────────────────────────────────────────────────────
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({
-    required this.label,
-    required this.value,
-    required this.isDark,
-    required this.icon,
-  });
-
-  final String label;
-  final String value;
-  final bool isDark;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final softBg =
-        isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF7F7F7);
-    final border =
-        isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white54 : Colors.black38;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-      decoration: BoxDecoration(
-        color: softBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: border),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 18, color: subtextColor),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: subtextColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.2,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Filter pill
-// ─────────────────────────────────────────────────────────────
+// ── Filter pill ────────────────────────────────────────────────────────────────
 
 class _FilterPill extends StatelessWidget {
   const _FilterPill({
@@ -760,7 +815,7 @@ class _FilterPill extends StatelessWidget {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
             color: selected
                 ? Colors.black
@@ -771,8 +826,19 @@ class _FilterPill extends StatelessWidget {
                   ? Colors.black
                   : (isDark
                       ? const Color(0xFF2A2A2A)
-                      : const Color(0xFFEAEAEA)),
+                      : const Color(0xFFE0E0E0)),
             ),
+            boxShadow: selected
+                ? const []
+                : (isDark
+                    ? const []
+                    : [
+                        BoxShadow(
+                          blurRadius: 6,
+                          offset: Offset(0, 2),
+                          color: Color(0x10000000),
+                        ),
+                      ]),
           ),
           child: Text(
             label,
@@ -790,11 +856,9 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Log folder card
-// ─────────────────────────────────────────────────────────────
+// ── Log folder card (with press-scale + accent color) ─────────────────────────
 
-class _LogCard extends StatelessWidget {
+class _LogCard extends StatefulWidget {
   const _LogCard({
     required this.folder,
     required this.count,
@@ -808,43 +872,89 @@ class _LogCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_LogCard> createState() => _LogCardState();
+}
+
+class _LogCardState extends State<_LogCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pressCtrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _pressCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 80),
+      reverseDuration: const Duration(milliseconds: 220),
+    );
+    _scale = Tween<double>(begin: 1.0, end: 0.97).animate(
+      CurvedAnimation(parent: _pressCtrl, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pressCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDark;
     final surface = isDark ? const Color(0xFF181818) : Colors.white;
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subtextColor = isDark ? Colors.white70 : Colors.black54;
-    final countLabel = count == 0
-        ? 'No entries'
-        : count == 1
-            ? '1 entry'
-            : '$count entries';
+    final accent = widget.folder.accentColor;
+    final iconBg = accent.withOpacity(isDark ? 0.16 : 0.10);
+    final hasEntries = widget.count > 0;
 
-    return Material(
-      color: surface,
-      elevation: isDark ? 0 : 3,
-      shadowColor: const Color(0x10000000),
-      borderRadius: BorderRadius.circular(20),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
+    final countLabel = widget.count == 0
+        ? 'Empty'
+        : widget.count == 1
+            ? '1 entry'
+            : '${widget.count} entries';
+
+    return ScaleTransition(
+      scale: _scale,
+      child: GestureDetector(
+        onTapDown: (_) => _pressCtrl.forward(),
+        onTapUp: (_) {
+          _pressCtrl.reverse();
+          widget.onTap();
+        },
+        onTapCancel: () => _pressCtrl.reverse(),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
+            color: surface,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: border),
+            boxShadow: isDark
+                ? const []
+                : const [
+                    BoxShadow(
+                      blurRadius: 12,
+                      offset: Offset(0, 3),
+                      color: Color(0x0C000000),
+                    ),
+                  ],
           ),
           child: Row(
             children: [
               Hero(
-                tag: 'folder_icon_${folder.category}',
+                tag: 'folder_icon_${widget.folder.category}',
                 child: Container(
                   width: 52,
                   height: 52,
                   decoration: BoxDecoration(
-                    color: Colors.black,
+                    color: iconBg,
                     borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: accent.withOpacity(isDark ? 0.22 : 0.18)),
                   ),
-                  child: Icon(folder.icon, color: Colors.white, size: 26),
+                  child: Icon(widget.folder.icon, color: accent, size: 26),
                 ),
               ),
               const SizedBox(width: 14),
@@ -853,7 +963,7 @@ class _LogCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      folder.title,
+                      widget.folder.title,
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w900,
@@ -862,7 +972,7 @@ class _LogCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      folder.subtitle,
+                      widget.folder.subtitle,
                       style: TextStyle(
                         fontSize: 12,
                         color: subtextColor,
@@ -876,24 +986,26 @@ class _LogCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Container(
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
+                        horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(
-                      color: isDark
-                          ? const Color(0xFF252525)
-                          : const Color(0xFFF0F0F0),
+                      color: hasEntries
+                          ? accent.withOpacity(isDark ? 0.20 : 0.12)
+                          : (isDark
+                              ? const Color(0xFF252525)
+                              : const Color(0xFFF0F0F0)),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: border),
                     ),
                     child: Text(
                       countLabel,
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
-                        color: textColor,
+                        color: hasEntries
+                            ? accent
+                            : (isDark ? Colors.white38 : Colors.black38),
                       ),
                     ),
                   ),
@@ -913,34 +1025,33 @@ class _LogCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// Recent activity tile
-// ─────────────────────────────────────────────────────────────
+// ── Recent activity tile ───────────────────────────────────────────────────────
 
 class _RecentActivityTile extends StatelessWidget {
   const _RecentActivityTile({
     required this.title,
     required this.subtitle,
     required this.isDark,
+    required this.accentColor,
   });
 
   final String title;
   final String subtitle;
   final bool isDark;
+  final Color accentColor;
 
   @override
   Widget build(BuildContext context) {
     final surface = isDark ? const Color(0xFF181818) : Colors.white;
     final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
-    final softBg =
-        isDark ? const Color(0xFF222222) : const Color(0xFFF7F7F7);
     final textColor = isDark ? Colors.white : Colors.black87;
     final subtextColor = isDark ? Colors.white70 : Colors.black54;
+    final iconBg = accentColor.withOpacity(isDark ? 0.16 : 0.10);
 
     return Material(
       color: surface,
       elevation: isDark ? 0 : 2,
-      shadowColor: const Color(0x10000000),
+      shadowColor: const Color(0x0C000000),
       borderRadius: BorderRadius.circular(18),
       clipBehavior: Clip.antiAlias,
       child: Container(
@@ -952,15 +1063,15 @@ class _RecentActivityTile extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
-                color: softBg,
+                color: iconBg,
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 Icons.history_rounded,
-                color: isDark ? Colors.white60 : Colors.black45,
+                color: accentColor,
                 size: 20,
               ),
             ),
@@ -989,6 +1100,15 @@ class _RecentActivityTile extends StatelessWidget {
                     ),
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: accentColor,
+                shape: BoxShape.circle,
               ),
             ),
           ],
