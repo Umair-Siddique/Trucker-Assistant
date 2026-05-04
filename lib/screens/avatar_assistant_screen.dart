@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:lottie/lottie.dart' as import_lottie;
 import 'package:just_audio/just_audio.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
@@ -730,6 +731,75 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
       );
     }
 
+    // "Go back to route / resume navigation / clear search results"
+    final resumeNavPhrases = [
+      'back to my route',
+      'back to route',
+      'back on route',
+      'back to navigation',
+      'back to my destination',
+      'back to destination',
+      'go back to destination',
+      'go back to my destination',
+      'go back to route',
+      'go back to navigation',
+      'take me back to my route',
+      'take me back to navigation',
+      'resume navigation',
+      'resume route',
+      'continue to destination',
+      'continue my route',
+      'continue navigation',
+      'clear search',
+      'clear results',
+      'clear markers',
+      'dismiss results',
+      'hide results',
+      'remove markers',
+      'show my route',
+      'focus on route',
+      'focus on my route',
+      'return to navigation',
+      'return to route',
+      'cancel search',
+    ];
+    if (resumeNavPhrases.any((p) => lower.contains(p))) {
+      return sendMapNav(
+        const mapnavbus.MapNavigateCommand(
+          action: mapnavbus.MapNavigationAction.clearSearchResults,
+        ),
+      );
+    }
+
+    // "Find X along the route / along my way / on the way"
+    final alongRoutePhrases = [
+      ' along the route',
+      ' along my route',
+      ' along the way',
+      ' along my way',
+      ' on the way',
+      ' on my way',
+      ' on the route',
+      ' during the route',
+    ];
+    for (final phrase in alongRoutePhrases) {
+      if (lower.contains(phrase)) {
+        final query = text.substring(0, lower.indexOf(phrase)).trim();
+        final cleaned = query
+            .replaceFirst(RegExp(r'^(find|find me|show me|look for|search for)\s+', caseSensitive: false), '')
+            .trim();
+        if (cleaned.isNotEmpty) {
+          return sendMapNav(
+            mapnavbus.MapNavigateCommand(
+              action: mapnavbus.MapNavigationAction.searchAlongRoute,
+              destinationQuery: cleaned,
+            ),
+          );
+        }
+        break;
+      }
+    }
+
     if (lower.contains('reroute') || lower.contains('re route')) {
       return sendMapNav(
         const mapnavbus.MapNavigateCommand(
@@ -836,6 +906,32 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
       return sendMapNav(
         const mapnavbus.MapNavigateCommand(
           action: mapnavbus.MapNavigationAction.recenter,
+        ),
+      );
+    }
+
+    if (lower.contains('reset compass') ||
+        lower.contains('north up') ||
+        lower.contains('face north') ||
+        lower.contains('reset north') ||
+        lower == 'compass') {
+      return sendMapNav(
+        const mapnavbus.MapNavigateCommand(
+          action: mapnavbus.MapNavigationAction.resetCompass,
+        ),
+      );
+    }
+
+    if (lower.contains('what direction') ||
+        lower.contains('which direction') ||
+        lower.contains('what heading') ||
+        lower.contains('my heading') ||
+        lower.contains('am i heading') ||
+        lower.contains('direction am i') ||
+        lower == 'heading') {
+      return sendMapNav(
+        const mapnavbus.MapNavigateCommand(
+          action: mapnavbus.MapNavigationAction.queryHeading,
         ),
       );
     }
@@ -1159,32 +1255,33 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
     final isTyping =
         (isAi || (!isUser && !isError)) && displayText.trim().isEmpty && _busy;
 
-    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
+    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE4E4E7);
 
     if (isUser) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 6, left: 56),
+        padding: const EdgeInsets.only(bottom: 8, left: 60),
         child: Align(
           alignment: Alignment.centerRight,
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 300),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-            decoration: const BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.only(
+            constraints: const BoxConstraints(maxWidth: 290),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF2C2C2E) : Colors.black,
+              borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(20),
                 topRight: Radius.circular(20),
                 bottomLeft: Radius.circular(20),
-                bottomRight: Radius.circular(4),
+                bottomRight: Radius.circular(5),
               ),
             ),
             child: Text(
               displayText,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
+              style: TextStyle(
+                color: isDark ? Colors.white : Colors.white,
+                fontSize: 14.5,
                 height: 1.45,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ),
@@ -1193,40 +1290,38 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
     }
 
     if (isError) {
-      final errBg = isDark ? const Color(0xFF2E1010) : const Color(0xFFFFF0F0);
-      final errFg = isDark ? const Color(0xFFFF9090) : const Color(0xFFB91C1C);
+      final errBg = isDark ? const Color(0xFF2A1010) : const Color(0xFFFFF3F3);
+      final errFg =
+          isDark ? const Color(0xFFFF8080) : const Color(0xFFB91C1C);
       final errBorder =
-          isDark ? const Color(0xFF5C1A1A) : const Color(0xFFFFCCCC);
+          isDark ? const Color(0xFF5C1818) : const Color(0xFFFFD0D0);
       return Padding(
-        padding: const EdgeInsets.only(bottom: 6, right: 40),
+        padding: const EdgeInsets.only(bottom: 8, right: 40),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Container(
-              width: 32,
-              height: 32,
+              width: 30,
+              height: 30,
               margin: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
                 color: errBg,
                 shape: BoxShape.circle,
                 border: Border.all(color: errBorder),
               ),
-              child: Icon(
-                Icons.warning_amber_rounded,
-                color: errFg,
-                size: 16,
-              ),
+              child:
+                  Icon(Icons.warning_amber_rounded, color: errFg, size: 15),
             ),
             Flexible(
               child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 11),
                 decoration: BoxDecoration(
                   color: errBg,
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(20),
                     topRight: Radius.circular(20),
-                    bottomLeft: Radius.circular(4),
+                    bottomLeft: Radius.circular(5),
                     bottomRight: Radius.circular(20),
                   ),
                   border: Border.all(color: errBorder),
@@ -1235,9 +1330,9 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
                   displayText,
                   style: TextStyle(
                     color: errFg,
-                    fontSize: 13,
+                    fontSize: 13.5,
                     height: 1.45,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
@@ -1248,64 +1343,73 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
     }
 
     // AI message
-    final aiBg = isDark ? const Color(0xFF1D1D1D) : Colors.white;
-    final aiFg = isDark ? Colors.white : Colors.black87;
+    final aiBg = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final aiFg = isDark ? const Color(0xFFF2F2F7) : const Color(0xFF0F0F0F);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6, right: 56),
+      padding: const EdgeInsets.only(bottom: 8, right: 60),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          // AI avatar — gradient rounded square with "RD"
           Container(
-            width: 32,
-            height: 32,
-            margin: const EdgeInsets.only(right: 8),
-            decoration: const BoxDecoration(
-              color: Colors.black,
-              shape: BoxShape.circle,
+            width: 30,
+            height: 30,
+            margin: const EdgeInsets.only(right: 8, bottom: 2),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1C1C1E), Color(0xFF3A3A3C)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
-              Icons.mic_rounded,
-              color: Colors.white,
-              size: 15,
+            child: const Center(
+              child: Text(
+                'RD',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.3,
+                ),
+              ),
             ),
           ),
           Flexible(
-            child: Material(
-              color: aiBg,
-              elevation: isDark ? 0 : 2,
-              shadowColor: const Color(0x10000000),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(20),
-                topRight: Radius.circular(20),
-                bottomLeft: Radius.circular(4),
-                bottomRight: Radius.circular(20),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                decoration: BoxDecoration(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                    bottomLeft: Radius.circular(4),
-                    bottomRight: Radius.circular(20),
-                  ),
-                  border: Border.all(color: border),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+              decoration: BoxDecoration(
+                color: aiBg,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(5),
+                  topRight: Radius.circular(20),
+                  bottomLeft: Radius.circular(20),
+                  bottomRight: Radius.circular(20),
                 ),
-                child: isTyping
-                    ? const _TypingDots()
-                    : Text(
-                        displayText,
-                        style: TextStyle(
-                          color: aiFg,
-                          fontSize: 14,
-                          height: 1.45,
-                          fontWeight: FontWeight.w500,
+                border: Border.all(color: border),
+                boxShadow: isDark
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
                         ),
-                      ),
+                      ],
               ),
+              child: isTyping
+                  ? const _TypingDots()
+                  : Text(
+                      displayText,
+                      style: TextStyle(
+                        color: aiFg,
+                        fontSize: 14.5,
+                        height: 1.5,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -1316,147 +1420,141 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final mq = MediaQuery.of(context);
 
-    final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF4F4F4);
-    final surface = isDark ? const Color(0xFF181818) : Colors.white;
-    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final hintColor = isDark ? Colors.white54 : Colors.black54;
+    final bg = isDark ? const Color(0xFF111111) : const Color(0xFFF2F4F7);
+    final surface = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final headerBg = isDark ? const Color(0xFF161618) : Colors.white;
+    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE4E4E7);
+    final textColor = isDark ? Colors.white : const Color(0xFF0F0F0F);
+    final hintColor = isDark ? const Color(0xFF8E8E93) : const Color(0xFF8E8E93);
 
     final voiceActive = _openAiListening || _isHolding;
 
     final statusText = _openAiListening
-        ? 'Hands-free voice  ·  tap mic to end  ·  Stop interrupts reply'
+        ? 'Hands-free  ·  tap mic to end  ·  Stop interrupts reply'
         : _isHolding
             ? 'Listening… release to send'
             : _busy
                 ? 'Working on your request…'
                 : _useOpenAiVoice
                     ? 'Tap mic for hands-free voice, or type below'
-                    : 'Hold mic for voice, or type below';
+                    : 'Hold mic to talk, or type below';
 
-    return Scaffold(
-      backgroundColor: bg,
-      appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: bg,
-        surfaceTintColor: Colors.transparent,
-        systemOverlayStyle:
-            isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
-        title: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: const BoxDecoration(
-                color: Colors.black,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.smart_toy_outlined,
-                color: Colors.white,
-                size: 18,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'RoadDogg AI',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-                Text(
-                  'AI Co-Pilot for Truckers',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: hintColor,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-        actions: [
-          if (_busy && !voiceActive)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: hintColor,
-                ),
-              ),
-            ),
-          if (_openAiListening)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade700,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.circle, color: Colors.white, size: 8),
-                    SizedBox(width: 5),
-                    Text(
-                      'Live',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          if (_isHolding && !_openAiListening)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade700,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.circle, color: Colors.white, size: 8),
-                    SizedBox(width: 5),
-                    Text(
-                      'Listening',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          const SizedBox(width: 8),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+        statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       ),
-      body: SafeArea(
-        top: false,
-        child: Column(
+      child: Scaffold(
+        backgroundColor: bg,
+        body: Column(
           children: [
+            // ── Header (replaces AppBar for full status-bar control) ────
+            Container(
+              color: headerBg,
+              child: SafeArea(
+                bottom: false,
+                child: Container(
+                  height: 62,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: headerBg,
+                    border: Border(
+                      bottom: BorderSide(color: border, width: 0.8),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      // AI logo
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF1C1C1E), Color(0xFF3A3A3C)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'RD',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              'RoadDogg AI',
+                              style: TextStyle(
+                                color: textColor,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15,
+                                letterSpacing: -0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 1),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 300),
+                              child: Text(
+                                _openAiListening
+                                    ? '● Live session active'
+                                    : _isHolding
+                                        ? '● Listening…'
+                                        : _busy
+                                            ? 'Thinking…'
+                                            : 'AI Co-Pilot for Truckers',
+                                key: ValueKey(_openAiListening
+                                    ? 'live'
+                                    : _isHolding
+                                        ? 'hold'
+                                        : _busy
+                                            ? 'busy'
+                                            : 'idle'),
+                                style: TextStyle(
+                                  color: _openAiListening
+                                      ? Colors.green.shade600
+                                      : _isHolding
+                                          ? Colors.orange.shade600
+                                          : hintColor,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Busy indicator
+                      if (_busy && !voiceActive)
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.8,
+                            color: hintColor,
+                          ),
+                        ),
+                      if (_busy && !voiceActive) const SizedBox(width: 12),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
             // ── Chat area ──────────────────────────────────────
             Expanded(
               child: _msgs.isEmpty
@@ -1466,18 +1564,19 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
                     )
                   : ListView.builder(
                       controller: _scrollController,
-                      padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+                      padding: EdgeInsets.fromLTRB(
+                          16, 16, 16, mq.viewInsets.bottom + 12),
                       itemCount: _msgs.length,
                       itemBuilder: (_, i) {
                         return TweenAnimationBuilder<double>(
                           key: ValueKey(i),
                           tween: Tween(begin: 0.0, end: 1.0),
-                          duration: const Duration(milliseconds: 280),
+                          duration: const Duration(milliseconds: 260),
                           curve: Curves.easeOutCubic,
                           builder: (_, v, child) => Opacity(
                             opacity: v,
                             child: Transform.translate(
-                              offset: Offset(0, 8 * (1 - v)),
+                              offset: Offset(0, 10 * (1 - v)),
                               child: child,
                             ),
                           ),
@@ -1487,151 +1586,174 @@ class _AvatarAssistantScreenState extends State<AvatarAssistantScreen>
                     ),
             ),
 
-            // ── Input bar ──────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Material(
-                color: surface,
-                elevation: isDark ? 0 : 5,
-                shadowColor: const Color(0x12000000),
-                borderRadius: BorderRadius.circular(24),
-                clipBehavior: Clip.antiAlias,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: border),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+            // ── Bottom input area ──────────────────────────────
+            Container(
+              color: headerBg,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _textController,
-                          minLines: 1,
-                          maxLines: 4,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _sendTypedMessage(),
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: _busy
-                                ? 'Working…'
-                                : _openAiListening
-                                    ? 'Voice chat on — tap mic to stop'
-                                    : _isHolding
-                                        ? 'Listening…'
-                                        : 'Message RoadDogg AI',
-                            hintStyle: TextStyle(
-                              color: hintColor,
-                              fontSize: 15,
-                            ),
-                            border: InputBorder.none,
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 0,
-                              vertical: 10,
-                            ),
-                          ),
+                      // Input row
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+                        decoration: BoxDecoration(
+                          color: bg,
+                          borderRadius: BorderRadius.circular(26),
+                          border: Border.all(color: border),
+                          boxShadow: isDark
+                              ? null
+                              : [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.06),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      // Stop button (interrupt AI reply)
-                      if (_useOpenAiVoice && _openAiListening) ...[
-                        _ActionButton(
-                          onTap: _interruptOpenAiAssistant,
-                          backgroundColor: Colors.red.shade700,
-                          borderColor: Colors.red.shade900,
-                          icon: Icons.stop_rounded,
-                          iconColor: Colors.white,
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      // Mic button with pulse ring
-                      AnimatedBuilder(
-                        animation: _pulseCtrl,
-                        builder: (_, child) {
-                          final pulse = voiceActive ? _pulseCtrl.value : 0.0;
-                          return Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              if (voiceActive)
-                                Transform.scale(
-                                  scale: 1.0 + 0.45 * pulse,
-                                  child: Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(
-                                          alpha: 0.28 * (1 - pulse)),
-                                      shape: BoxShape.circle,
-                                    ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _textController,
+                                minLines: 1,
+                                maxLines: 4,
+                                textInputAction: TextInputAction.send,
+                                onSubmitted: (_) => _sendTypedMessage(),
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: _busy
+                                      ? 'Working…'
+                                      : _openAiListening
+                                          ? 'Voice chat active…'
+                                          : _isHolding
+                                              ? 'Listening…'
+                                              : 'Ask RoadDogg anything…',
+                                  hintStyle: TextStyle(
+                                    color: hintColor,
+                                    fontSize: 15,
+                                  ),
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 9,
                                   ),
                                 ),
-                              child!,
-                            ],
-                          );
-                        },
-                        child: GestureDetector(
-                          onTap: _useOpenAiVoice ? _toggleOpenAiVoice : null,
-                          onLongPressStart: _useOpenAiVoice
-                              ? null
-                              : (_) => _startHoldToTalk(),
-                          onLongPressEnd: _useOpenAiVoice
-                              ? null
-                              : (_) => _stopHoldToTalkAndSend(),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeOutCubic,
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: voiceActive ? Colors.black : surface,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: voiceActive
-                                    ? Colors.black
-                                    : (isDark
-                                        ? const Color(0xFF2E2E2E)
-                                        : Colors.black12),
                               ),
                             ),
-                            child: Icon(
-                              voiceActive ? Icons.mic : Icons.mic_none,
-                              color: voiceActive ? Colors.white : textColor,
-                              size: 20,
+                            const SizedBox(width: 6),
+                            // Stop button
+                            if (_useOpenAiVoice && _openAiListening) ...[
+                              _ActionButton(
+                                onTap: _interruptOpenAiAssistant,
+                                backgroundColor: Colors.red.shade600,
+                                borderColor: Colors.red.shade700,
+                                icon: Icons.stop_rounded,
+                                iconColor: Colors.white,
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            // Mic button with pulse ring
+                            AnimatedBuilder(
+                              animation: _pulseCtrl,
+                              builder: (_, child) {
+                                final pulse =
+                                    voiceActive ? _pulseCtrl.value : 0.0;
+                                return Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    if (voiceActive)
+                                      Transform.scale(
+                                        scale: 1.0 + 0.4 * pulse,
+                                        child: Container(
+                                          width: 42,
+                                          height: 42,
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withValues(
+                                                alpha: 0.22 * (1 - pulse)),
+                                            shape: BoxShape.circle,
+                                          ),
+                                        ),
+                                      ),
+                                    child!,
+                                  ],
+                                );
+                              },
+                              child: GestureDetector(
+                                onTap:
+                                    _useOpenAiVoice ? _toggleOpenAiVoice : null,
+                                onLongPressStart: _useOpenAiVoice
+                                    ? null
+                                    : (_) => _startHoldToTalk(),
+                                onLongPressEnd: _useOpenAiVoice
+                                    ? null
+                                    : (_) => _stopHoldToTalkAndSend(),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOutCubic,
+                                  width: 42,
+                                  height: 42,
+                                  decoration: BoxDecoration(
+                                    color: voiceActive
+                                        ? (_openAiListening
+                                            ? Colors.green.shade700
+                                            : Colors.black)
+                                        : surface,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: voiceActive
+                                          ? Colors.transparent
+                                          : border,
+                                    ),
+                                  ),
+                                  child: Icon(
+                                    voiceActive ? Icons.mic : Icons.mic_none,
+                                    color: voiceActive
+                                        ? Colors.white
+                                        : hintColor,
+                                    size: 19,
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 6),
+                            // Send button
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              child: _ActionButton(
+                                onTap: _busy ? null : _sendTypedMessage,
+                                backgroundColor:
+                                    _busy ? const Color(0xFF2C2C2E) : Colors.black,
+                                borderColor: Colors.transparent,
+                                icon: Icons.arrow_upward_rounded,
+                                iconColor:
+                                    _busy ? Colors.white38 : Colors.white,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      // Send button
-                      _ActionButton(
-                        onTap: _busy ? null : _sendTypedMessage,
-                        backgroundColor: Colors.black,
-                        borderColor: Colors.black,
-                        icon: Icons.arrow_upward_rounded,
-                        iconColor: _busy ? Colors.white54 : Colors.white,
+                      const SizedBox(height: 6),
+                      // Status hint
+                      Text(
+                        statusText,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: hintColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.1,
+                        ),
                       ),
                     ],
                   ),
-                ),
-              ),
-            ),
-
-            // ── Status hint ────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                statusText,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: hintColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
@@ -1764,115 +1886,122 @@ class _AssistantEmptyState extends StatelessWidget {
 
   static const _suggestions = [
     ('Find nearby fuel stop', Icons.local_gas_station_outlined),
+    ('Navigate to truck stop', Icons.local_shipping_outlined),
     ('Check the weather', Icons.cloud_outlined),
-    ('Open my logs', Icons.article_outlined),
+    ('Open my driver logs', Icons.article_outlined),
     ('Find a rest area', Icons.hotel_outlined),
+    ('Show traffic', Icons.traffic_outlined),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final surface = isDark ? const Color(0xFF181818) : Colors.white;
-    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFEAEAEA);
-    final textColor = isDark ? Colors.white : Colors.black87;
-    final subtextColor = isDark ? Colors.white54 : Colors.black45;
-    final pillBg = isDark ? const Color(0xFF1F1F1F) : const Color(0xFFF5F5F5);
+    final surface = isDark ? const Color(0xFF1C1C1E) : Colors.white;
+    final border = isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE4E4E7);
+    final textColor =
+        isDark ? const Color(0xFFF2F2F7) : const Color(0xFF0F0F0F);
+    final subtextColor = isDark ? const Color(0xFF8E8E93) : const Color(0xFF8E8E93);
 
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: const BoxDecoration(
-                color: Colors.black,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.smart_toy_outlined,
-                color: Colors.white,
-                size: 34,
-              ),
+            // Lottie animation as hero
+            import_lottie.Lottie.asset(
+              'assets/animations/AI Assistant.json',
+              width: 160,
+              height: 160,
+              fit: BoxFit.contain,
+              repeat: true,
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 8),
             Text(
               'RoadDogg AI',
               style: TextStyle(
                 color: textColor,
-                fontSize: 22,
+                fontSize: 24,
                 fontWeight: FontWeight.w900,
+                letterSpacing: -0.5,
               ),
             ),
             const SizedBox(height: 6),
             Text(
-              'Your AI co-pilot is ready to help.\nAsk anything about your route, logs, or the road.',
+              'Your AI co-pilot for the long haul.\nAsk about routes, logs, weather, or the road ahead.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: subtextColor,
                 fontSize: 13,
-                height: 1.5,
+                height: 1.55,
               ),
             ),
             const SizedBox(height: 28),
-            Material(
-              color: surface,
-              borderRadius: BorderRadius.circular(20),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Try asking',
-                      style: TextStyle(
-                        color: subtextColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5,
-                      ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              decoration: BoxDecoration(
+                color: surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: border),
+                boxShadow: isDark
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'TRY ASKING',
+                    style: TextStyle(
+                      color: subtextColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.0,
                     ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _suggestions.map((s) {
-                        return GestureDetector(
-                          onTap: () => onSuggestion(s.$1),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 9),
-                            decoration: BoxDecoration(
-                              color: pillBg,
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: border),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(s.$2, size: 14, color: subtextColor),
-                                const SizedBox(width: 6),
-                                Text(
-                                  s.$1,
-                                  style: TextStyle(
-                                    color: textColor,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _suggestions.map((s) {
+                      return GestureDetector(
+                        onTap: () => onSuggestion(s.$1),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 13, vertical: 9),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? const Color(0xFF2C2C2E)
+                                : const Color(0xFFF5F5F7),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: border),
                           ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(s.$2, size: 13, color: subtextColor),
+                              const SizedBox(width: 6),
+                              Text(
+                                s.$1,
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ],
               ),
             ),
           ],

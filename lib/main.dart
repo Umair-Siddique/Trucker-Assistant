@@ -50,11 +50,16 @@ class RoadDoggApp extends StatelessWidget {
 
             return AnnotatedRegion<SystemUiOverlayStyle>(
               value: SystemUiOverlayStyle(
-                statusBarColor: bg,
+                // Transparent lets each screen's scaffold background show
+                // through the status bar without a hard-coded mismatch.
+                statusBarColor: Colors.transparent,
                 statusBarIconBrightness:
                     isDark ? Brightness.light : Brightness.dark,
                 statusBarBrightness:
                     isDark ? Brightness.dark : Brightness.light,
+                systemNavigationBarColor: bg,
+                systemNavigationBarIconBrightness:
+                    isDark ? Brightness.light : Brightness.dark,
               ),
               child: child ?? const SizedBox.shrink(),
             );

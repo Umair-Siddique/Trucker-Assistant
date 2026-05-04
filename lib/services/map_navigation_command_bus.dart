@@ -23,6 +23,10 @@ enum MapNavigationAction {
   queryNextTurn,
   repeatInstruction,
   queryAfterThis,
+  queryHeading,
+  resetCompass,
+  clearSearchResults,
+  searchAlongRoute,
 }
 
 class MapNavigationReply {

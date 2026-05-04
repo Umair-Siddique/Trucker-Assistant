@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 class PlaceSearchResult {
   final String id;
+  final String resourceName;
   final String name;
   final String address;
   final double? latitude;
@@ -14,12 +15,27 @@ class PlaceSearchResult {
 
   const PlaceSearchResult({
     required this.id,
+    required this.resourceName,
     required this.name,
     required this.address,
     required this.latitude,
     required this.longitude,
     required this.rating,
     required this.userRatingCount,
+  });
+}
+
+class PlaceDetailsResult {
+  final bool? openNow;
+  final String? hoursSummary;
+  final List<String> weekdayDescriptions;
+  final List<String> photoUrls;
+
+  const PlaceDetailsResult({
+    required this.openNow,
+    required this.hoursSummary,
+    required this.weekdayDescriptions,
+    required this.photoUrls,
   });
 }
 
@@ -46,6 +62,14 @@ class RouteResult {
     required this.durationSeconds,
     required this.encodedPolyline,
     required this.steps,
+  });
+}
+
+class RouteOptionsResult {
+  final List<RouteResult> routes;
+
+  const RouteOptionsResult({
+    required this.routes,
   });
 }
 
@@ -135,6 +159,7 @@ class GooglePlacesRoutesClient {
 
     return PlaceSearchResult(
       id: (place['id'] ?? place['placeId'] ?? place['name'] ?? '').toString(),
+      resourceName: (place['name'] ?? '').toString(),
       name: ((place['displayName'] as Map?)?['text'] ?? place['name'] ?? '')
           .toString(),
       address:
@@ -146,10 +171,120 @@ class GooglePlacesRoutesClient {
     );
   }
 
+  String _photoMediaUrl(String photoName, String apiKey) {
+    return 'https://places.googleapis.com/v1/$photoName/media'
+        '?maxWidthPx=1200&key=$apiKey';
+  }
+
+  Future<PlaceDetailsResult> fetchPlaceDetails({
+    required PlaceSearchResult place,
+    int maxPhotos = 6,
+  }) async {
+    final key = _googleApiKey ?? _missingKey();
+    final resourceName = place.resourceName.trim();
+    final placeId = place.id.trim();
+    final target = resourceName.isNotEmpty
+        ? resourceName
+        : (placeId.startsWith('places/') ? placeId : 'places/$placeId');
+    if (target.isEmpty || target == 'places/') {
+      throw Exception('Place details unavailable: missing place id.');
+    }
+
+    final resp = await http.get(
+      Uri.parse('https://places.googleapis.com/v1/$target'),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': key,
+        'X-Goog-FieldMask':
+            'id,name,currentOpeningHours.openNow,currentOpeningHours.weekdayDescriptions,'
+            'regularOpeningHours.weekdayDescriptions,photos.name',
+      },
+    );
+
+    final text = resp.body;
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw Exception(
+        _prettyGoogleHttpError(
+          prefix: 'Google Place details',
+          statusCode: resp.statusCode,
+          body: text,
+        ),
+      );
+    }
+
+    final data = jsonDecode(text);
+    final map = data is Map<String, dynamic> ? data : <String, dynamic>{};
+
+    final currentHours = map['currentOpeningHours'] is Map
+        ? Map<String, dynamic>.from(map['currentOpeningHours'] as Map)
+        : const <String, dynamic>{};
+    final regularHours = map['regularOpeningHours'] is Map
+        ? Map<String, dynamic>.from(map['regularOpeningHours'] as Map)
+        : const <String, dynamic>{};
+
+    final openNow = currentHours['openNow'] is bool
+        ? currentHours['openNow'] as bool
+        : null;
+
+    final weekdaysRaw = (currentHours['weekdayDescriptions'] as List?) ??
+        (regularHours['weekdayDescriptions'] as List?) ??
+        const [];
+    final weekdays = weekdaysRaw
+        .map((e) => e.toString().trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    final photosRaw = (map['photos'] as List? ?? const []);
+    final photoUrls = <String>[];
+    for (final item in photosRaw) {
+      if (item is! Map) continue;
+      final photo = Map<String, dynamic>.from(item);
+      final name = (photo['name'] ?? '').toString().trim();
+      if (name.isEmpty) continue;
+      photoUrls.add(_photoMediaUrl(name, key));
+      if (photoUrls.length >= maxPhotos) break;
+    }
+
+    String? hoursSummary;
+    if (weekdays.isNotEmpty) {
+      const dayShort = [
+        'Mon',
+        'Tue',
+        'Wed',
+        'Thu',
+        'Fri',
+        'Sat',
+        'Sun',
+      ];
+      final now = DateTime.now();
+      final todayIdx = (now.weekday - 1).clamp(0, 6);
+      final todayPrefix = '${dayShort[todayIdx]}:';
+      for (final item in weekdays) {
+        if (item.startsWith(todayPrefix)) {
+          hoursSummary = item.replaceFirst(todayPrefix, '').trim();
+          break;
+        }
+      }
+      hoursSummary ??= weekdays.first;
+    }
+
+    return PlaceDetailsResult(
+      openNow: openNow,
+      hoursSummary: hoursSummary,
+      weekdayDescriptions: weekdays,
+      photoUrls: photoUrls,
+    );
+  }
+
   Future<List<PlaceSearchResult>> searchText({
     required String query,
     double? latitude,
     double? longitude,
+    // Rectangle bias — overrides circle when all four are provided.
+    double? boundsNorth,
+    double? boundsSouth,
+    double? boundsEast,
+    double? boundsWest,
     int maxResults = 8,
   }) async {
     final key = _googleApiKey ?? _missingKey();
@@ -159,7 +294,19 @@ class GooglePlacesRoutesClient {
       'maxResultCount': maxResults.clamp(1, 10),
     };
 
-    if (latitude != null && longitude != null) {
+    final hasRect = boundsNorth != null &&
+        boundsSouth != null &&
+        boundsEast != null &&
+        boundsWest != null;
+
+    if (hasRect) {
+      body['locationBias'] = {
+        'rectangle': {
+          'low': {'latitude': boundsSouth, 'longitude': boundsWest},
+          'high': {'latitude': boundsNorth, 'longitude': boundsEast},
+        },
+      };
+    } else if (latitude != null && longitude != null) {
       body['locationBias'] = {
         'circle': {
           'center': {'latitude': latitude, 'longitude': longitude},
@@ -258,13 +405,46 @@ class GooglePlacesRoutesClient {
         .toList();
   }
 
-  Future<RouteResult> computeRoute({
+  RouteResult _normalizeRoute(Map<String, dynamic> route) {
+    final distanceMeters = _toInt(route['distanceMeters']) ?? 0;
+    final durationSeconds = _parseDurationToSeconds(route['duration']);
+    final encodedPolyline =
+        ((route['polyline'] as Map?)?['encodedPolyline'] ?? '').toString();
+
+    final legs = route['legs'] as List?;
+    final firstLeg = (legs != null && legs.isNotEmpty && legs.first is Map)
+        ? Map<String, dynamic>.from(legs.first as Map)
+        : null;
+    final rawSteps = (firstLeg?['steps'] as List? ?? const []);
+
+    final steps = rawSteps.whereType<Map>().map((raw) {
+      final step = Map<String, dynamic>.from(raw);
+      return RouteStepResult(
+        instruction:
+            (((step['navigationInstruction'] as Map?)?['instructions']) ??
+                    'Continue')
+                .toString(),
+        distanceMeters: _toInt(step['distanceMeters']) ?? 0,
+        durationSeconds: _parseDurationToSeconds(step['staticDuration']),
+      );
+    }).toList();
+
+    return RouteResult(
+      distanceMeters: distanceMeters,
+      durationSeconds: durationSeconds,
+      encodedPolyline: encodedPolyline,
+      steps: steps,
+    );
+  }
+
+  Future<RouteOptionsResult> computeRoutes({
     required double originLatitude,
     required double originLongitude,
     required double destinationLatitude,
     required double destinationLongitude,
     bool avoidTolls = false,
     bool avoidHighways = false,
+    bool computeAlternatives = true,
   }) async {
     final key = _googleApiKey ?? _missingKey();
 
@@ -295,7 +475,7 @@ class GooglePlacesRoutesClient {
         },
         'travelMode': 'DRIVE',
         'routingPreference': 'TRAFFIC_AWARE',
-        'computeAlternativeRoutes': false,
+        'computeAlternativeRoutes': computeAlternatives,
         'languageCode': 'en-US',
         'units': 'IMPERIAL',
         'polylineQuality': 'HIGH_QUALITY',
@@ -321,41 +501,38 @@ class GooglePlacesRoutesClient {
     final data = jsonDecode(text);
     final routes =
         (data is Map) ? (data['routes'] as List? ?? const []) : const [];
-    final route = routes.isNotEmpty && routes.first is Map
-        ? Map<String, dynamic>.from(routes.first as Map)
-        : null;
-    if (route == null) {
+    if (routes.isEmpty) {
       throw Exception('No route returned from Google Routes API');
     }
-
-    final distanceMeters = _toInt(route['distanceMeters']) ?? 0;
-    final durationSeconds = _parseDurationToSeconds(route['duration']);
-    final encodedPolyline =
-        ((route['polyline'] as Map?)?['encodedPolyline'] ?? '').toString();
-
-    final legs = route['legs'] as List?;
-    final firstLeg = (legs != null && legs.isNotEmpty && legs.first is Map)
-        ? Map<String, dynamic>.from(legs.first as Map)
-        : null;
-    final rawSteps = (firstLeg?['steps'] as List? ?? const []);
-
-    final steps = rawSteps.whereType<Map>().map((raw) {
-      final step = Map<String, dynamic>.from(raw);
-      return RouteStepResult(
-        instruction:
-            (((step['navigationInstruction'] as Map?)?['instructions']) ??
-                    'Continue')
-                .toString(),
-        distanceMeters: _toInt(step['distanceMeters']) ?? 0,
-        durationSeconds: _parseDurationToSeconds(step['staticDuration']),
-      );
-    }).toList();
-
-    return RouteResult(
-      distanceMeters: distanceMeters,
-      durationSeconds: durationSeconds,
-      encodedPolyline: encodedPolyline,
-      steps: steps,
+    final normalized = routes
+        .whereType<Map>()
+        .map((r) => _normalizeRoute(Map<String, dynamic>.from(r)))
+        .toList();
+    if (normalized.isEmpty) {
+      throw Exception('No route returned from Google Routes API');
+    }
+    return RouteOptionsResult(
+      routes: normalized,
     );
+  }
+
+  Future<RouteResult> computeRoute({
+    required double originLatitude,
+    required double originLongitude,
+    required double destinationLatitude,
+    required double destinationLongitude,
+    bool avoidTolls = false,
+    bool avoidHighways = false,
+  }) async {
+    final options = await computeRoutes(
+      originLatitude: originLatitude,
+      originLongitude: originLongitude,
+      destinationLatitude: destinationLatitude,
+      destinationLongitude: destinationLongitude,
+      avoidTolls: avoidTolls,
+      avoidHighways: avoidHighways,
+      computeAlternatives: false,
+    );
+    return options.routes.first;
   }
 }
